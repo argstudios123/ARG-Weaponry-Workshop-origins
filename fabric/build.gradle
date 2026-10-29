@@ -1,0 +1,67 @@
+plugins {
+    id 'multiloader-loader'
+    id 'net.fabricmc.fabric-loom'
+}
+
+repositories {
+    maven {
+        name = "CurseMaven"
+        url = "https://cursemaven.com"
+    }
+}
+
+
+dependencies {
+    minecraft("com.mojang:minecraft:${minecraft_version}")
+    implementation("net.fabricmc:fabric-loader:${fabric_loader_version}")
+    implementation("net.fabricmc.fabric-api:fabric-api:${fabric_version}")
+    // Architectury API (architectury_version 22.0.5), CurseForge file 9111314 - required at runtime.
+    // modImplementation (not implementation) is required so Loom remaps the production jar to the
+    // development mappings; an unremapped mod jar cannot be loaded by a Loom development runtime.
+    // Architectury API (architectury_version 22.0.5), CurseForge file 9111314 - required at runtime.
+    // Minecraft 26.3 ships unobfuscated, so Loom 1.18 runs with loom.disableObfuscation() == true and
+    // does not create the remapping "mod*" configurations (modImplementation and friends) at all.
+    // Plain implementation is therefore the correct way to declare a mod dependency here; the jar is
+    // already compiled against the official names the development runtime uses.
+    implementation("curse.maven:architectury-api-419699:9111314")
+}
+
+loom {
+    def aw = project(':common').file("src/main/resources/${mod_id}.accesswidener")
+    if (aw.exists()) {
+        accessWidenerPath.set(aw)
+    }
+    runs {
+        client {
+            client()
+            setConfigName('Fabric Client')
+            ideConfigGenerated(true)
+            runDir('runs/client')
+        }
+        server {
+            server()
+            setConfigName('Fabric Server')
+            ideConfigGenerated(true)
+            runDir('runs/server')
+        }
+    }
+}
+
+// Implement mcgradleconventions loader attribute
+def loaderAttribute = Attribute.of('io.github.mcgradleconventions.loader', String)
+['apiElements', 'runtimeElements', 'sourcesElements', 'javadocElements', 'includeInternal', 'modCompileClasspath'].each { variant ->
+    configurations.named(variant) {
+        attributes {
+            attribute(loaderAttribute, 'fabric')
+        }
+    }
+}
+sourceSets.configureEach {
+    [it.compileClasspathConfigurationName, it.runtimeClasspathConfigurationName].each { variant->
+        configurations.named(variant) {
+            attributes {
+                attribute(loaderAttribute, 'fabric')
+            }
+        }
+    }
+}

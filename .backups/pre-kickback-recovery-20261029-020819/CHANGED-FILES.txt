@@ -1,0 +1,28 @@
+CHANGES MADE BY THIS TASK (only two source files, both in common/)
+=================================================================
+modified  common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/WeaponKickbackController.java
+          The response was replaced. Old: one impulse per shot shaped (t/T)e^(1-t/T) with T = 55 ms,
+          cut to zero at 8T, PLUS a "sustained" accumulator that was stepped by positionZIncrement at
+          every shot and decayed exponentially (tau = 0.4 s), with sample() returning early whenever the
+          per-shot channel was zero.
+          New: smoothstep kick (45 ms) + smoothstep recovery (240 ms), one additive impulse per shot,
+          overlap ceiling 3x amplitude, sub-tick sampling of the same analytic curve, no accumulator.
+          Sustained/previousBackward fields, SUSTAINED_DECAY_SECONDS, sustainedBackwardBlocks(),
+          IMPULSE_RISE_SECONDS and the old 8T impulseAt() are removed.
+
+modified  common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfile.java
+          Documentation only: the sustained_firing_Recoil block is described as parsed-but-not-applied
+          (it no longer contributes displacement, which is what caused the snap). No code, no constant,
+          no parsing and no JSON-schema change.
+
+added     common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/WeaponKickbackControllerTest.java  (16 tests)
+added     common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/WeaponKickbackAxisTest.java        (4 tests)
+
+NOT changed (verified by sha256 of every file)
+----------------------------------------------
+- common/src/main/resources/.../m100_dmr.json and every other content-pack file
+- PlayerRecoilController, ViewRecoilResponse, ViewShakeController, ViewShakeResponse,
+  CameraMixin, CameraComposition, CameraBoneAnimation, FirstPersonCamera
+- FirstPersonWeaponPass, WeaponKickbackAxis, WeaponRecoil, WeaponAiming, WeaponViewControllers
+- firing, ammunition, reload, inspection, audio, networking
+- fabric/ and neoforge/ (no source or resource change at all)

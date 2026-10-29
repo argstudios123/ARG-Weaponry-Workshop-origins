@@ -1,0 +1,48 @@
+CHANGES MADE BY THIS TASK (nothing outside common/ was modified)
+================================================================
+modified  common/build.gradle
+          test-only JUnit 5 / JOML / Gson dependencies (resolved offline from the local cache) and
+          tasks.named('test') { useJUnitPlatform() }. No runtime dependency added.
+
+modified  common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfile.java
+          screen_shake_recoil_speed is documented and clamped as an oscillation rate;
+          DEFAULT_SHAKE_SPEED 6.0 (decay) -> 8.0 (Point Blank default speed); new MAX_SHAKE_SPEED;
+          new of(Recoil, SustainedRecoil) overload so the JSON rules can be tested headlessly.
+
+modified  common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeController.java
+          rewritten. Old: mutable amplitude decaying exponentially at the configured speed, fixed 26 rad/s,
+          pitch as the main channel, 1.5 s cap. New: a clock plus ONE ViewShakeResponse per shot,
+          replaced on every shot, sampled as a pure function of interpolated elapsed time.
+
+added     common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeResponse.java
+          the closed-form per-shot curve: sin(pi * speed * progress), envelope 1 - p^3,
+          per-shot ±[A, 2A) yaw and roll, 0.35 s duration, no pitch channel.
+
+modified  common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/WeaponRecoil.java
+          builds the per-shot response (java.util.Random instead of RandomSource, advanced once per shot);
+          the other two layers are untouched.
+
+modified  common/src/main/java/com/arg_studios/arg_weaponry/mixin/client/CameraMixin.java
+          comment only (states that the shake is yaw/roll only and ends at exactly zero). No code change.
+
+added     common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeResponseTest.java
+added     common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeControllerTest.java
+added     common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfileTest.java
+added     common/src/test/java/com/arg_studios/arg_weaponry/client/camera/CameraCompositionTest.java
+
+PATH-LEVEL ADDITIONS (from the two sha256 manifests)
+----------------------------------------------------
+  48a49
+  > common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeResponse.java
+  241a243,246
+  > common/src/test/java/com/arg_studios/arg_weaponry/client/camera/CameraCompositionTest.java
+  > common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfileTest.java
+  > common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeControllerTest.java
+  > common/src/test/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeResponseTest.java
+
+FILES THAT APPEAR IN changes.diff BUT WERE NOT CHANGED BY THIS TASK
+-------------------------------------------------------------------
+common/src/main/resources/assets/arg_weaponry/weapon_packs/arg_default_pack/assets/arg_pack/
+  weapons_registry/weapons/dmrs/m100_dmr.json
+  Edited on disk at 01:50:19 by an external editor while this task was running: "range" 96 -> 195 and
+  the aiming-easing comment block. Its recoil block was not touched then and has not been touched here.

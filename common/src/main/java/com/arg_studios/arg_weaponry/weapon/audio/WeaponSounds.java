@@ -1,0 +1,192 @@
+package com.arg_studios.arg_weaponry.weapon.audio;
+
+import com.arg_studios.arg_weaponry.weapon.ResourceId;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * The weapon-defined sound selection rules.
+ *
+ * <p>This is the single place that answers "which sound does this action of this weapon use", and it is deliberately
+ * pure: no Minecraft types, no registry lookups, no playback. The client and the server both call it, which is what
+ * keeps the two sides from disagreeing about which key belongs to an action.</p>
+ *
+ * <h2>Absent means silent</h2>
+ * <p>Every lookup returns {@code null} when the weapon does not declare that key. Nothing is substituted: a weapon
+ * without {@code reload_empty} reloads silently, a weapon without {@code headshot} plays no headshot sound, and a
+ * weapon without a {@code sounds} object at all is silent everywhere. A {@code null}, blank or whitespace-only
+ * identifier is treated exactly like a missing entry, because the parser already drops those.</p>
+ */
+public final class WeaponSounds {
+
+    private WeaponSounds() {
+    }
+
+    /**
+     * @param sounds the definition's raw {@code sounds} map, may be {@code null}
+     * @param key    the action being performed, may be {@code null}
+     * @return the configured identifier, or {@code null} when that action is unconfigured for this weapon
+     */
+    public static ResourceId sound(Map<String, ResourceId> sounds, WeaponSoundKey key) {
+        if (sounds == null || sounds.isEmpty() || key == null) {
+            return null;
+        }
+        return sounds.get(key.jsonName());
+    }
+
+    /**
+     * @param sounds the definition's raw {@code sounds} map, may be {@code null}
+     * @param key    the action being performed
+     * @return whether the weapon declares a playable identifier for that action
+     */
+    public static boolean has(Map<String, ResourceId> sounds, WeaponSoundKey key) {
+        return sound(sounds, key) != null;
+    }
+
+    /**
+     * The key a shot of this weapon uses.
+     *
+     * <p>No suppressor or attachment system exists in this milestone, so the suppressed variant has exactly one
+     * well-defined meaning: <strong>a weapon that declares {@code fire_suppressed} but not {@code fire} is a silenced
+     * weapon</strong>, and every shot of it uses the suppressed sound. A weapon that declares both uses {@code fire},
+     * because there is no suppressed state to select the other one with. This keeps the key usable today and leaves the
+     * {@code suppressed} parameter as the single seam a future attachment system has to flip.</p>
+     *
+     * @param sounds     the definition's raw {@code sounds} map, may be {@code null}
+     * @param suppressed whether the weapon is currently in its suppressed state; no system sets this yet
+     * @return the key to play, or {@code null} when this weapon declares neither firing sound
+     */
+    public static WeaponSoundKey firingKey(Map<String, ResourceId> sounds, boolean suppressed) {
+        boolean silencedByDeclaration = !has(sounds, WeaponSoundKey.FIRE)
+                && has(sounds, WeaponSoundKey.FIRE_SUPPRESSED);
+        if (suppressed || silencedByDeclaration) {
+            return has(sounds, WeaponSoundKey.FIRE_SUPPRESSED) ? WeaponSoundKey.FIRE_SUPPRESSED : null;
+        }
+        return has(sounds, WeaponSoundKey.FIRE) ? WeaponSoundKey.FIRE : null;
+    }
+
+    /**
+     * @param emptyMagazine whether the magazine was empty when the reload started
+     * @return {@link WeaponSoundKey#RELOAD_EMPTY} or {@link WeaponSoundKey#RELOAD}
+     */
+    public static WeaponSoundKey reloadKey(boolean emptyMagazine) {
+        return emptyMagazine ? WeaponSoundKey.RELOAD_EMPTY : WeaponSoundKey.RELOAD;
+    }
+
+    /**
+     * @param emptyMagazine whether the magazine is empty while inspecting
+     * @return {@link WeaponSoundKey#INSPECT_EMPTY} or {@link WeaponSoundKey#INSPECT}
+     */
+    public static WeaponSoundKey inspectKey(boolean emptyMagazine) {
+        return emptyMagazine ? WeaponSoundKey.INSPECT_EMPTY : WeaponSoundKey.INSPECT;
+    }
+
+    /**
+     * The keys for drawing a weapon.
+     *
+     * <p>Order of precedence, documented because the schema has three variants: the first draw of a weapon in this
+     * session uses {@code draw_first} when it is declared; otherwise an empty magazine uses {@code draw_empty}; in every
+     * other case the ordinary {@code draw} is used. A weapon that declares none of them is silent when drawn.</p>
+     *
+     * @param sounds        the definition's raw {@code sounds} map, may be {@code null}
+     * @param firstDraw     whether this is the first draw of this weapon since the client joined the world
+     * @param emptyMagazine whether the magazine is empty
+     * @return the key to play, or {@code null} when the weapon declares none of the three
+     */
+    public static WeaponSoundKey drawKey(Map<String, ResourceId> sounds, boolean firstDraw, boolean emptyMagazine) {
+        List<WeaponSoundKey> keys = drawKeys(sounds, firstDraw, emptyMagazine);
+        return keys.isEmpty() ? null : keys.get(0);
+    }
+
+    /**
+     * Every key a draw may use for this weapon, best first, restricted to the keys the weapon declares.
+     *
+     * <p>This is {@link #drawKey} before the first element is picked, and it exists for one reason: a key can be
+     * <em>declared</em> while the audio behind it cannot be played - a pack that names
+     * {@code m100_dmr_draw_first} without shipping that {@code .ogg}, or a client whose sound registry does not know the
+     * identifier. Silence is the documented answer for a key a weapon does <em>not</em> declare, but a declared key that
+     * cannot be played should degrade to the next variant of the same action instead of muting the action entirely. The
+     * client walks this list and plays the first entry it can; the server, which cannot see a client's audio, still uses
+     * {@link #drawKey} and therefore the same preferred entry.</p>
+     *
+     * @param sounds        the definition's raw {@code sounds} map, may be {@code null}
+     * @param firstDraw     whether this is the first draw of this weapon since the client joined the world
+     * @param emptyMagazine whether the magazine is empty
+     * @return the declared keys in priority order, never {@code null}; empty when the weapon declares none
+     */
+    public static List<WeaponSoundKey> drawKeys(Map<String, ResourceId> sounds, boolean firstDraw,
+                                                boolean emptyMagazine) {
+        List<WeaponSoundKey> keys = new ArrayList<>(3);
+        if (firstDraw && has(sounds, WeaponSoundKey.DRAW_FIRST)) {
+            keys.add(WeaponSoundKey.DRAW_FIRST);
+        }
+        if (emptyMagazine && has(sounds, WeaponSoundKey.DRAW_EMPTY)) {
+            keys.add(WeaponSoundKey.DRAW_EMPTY);
+        }
+        if (has(sounds, WeaponSoundKey.DRAW)) {
+            keys.add(WeaponSoundKey.DRAW);
+        }
+        return List.copyOf(keys);
+    }
+
+    /**
+     * @param sounds        the definition's raw {@code sounds} map, may be {@code null}
+     * @param emptyMagazine whether the magazine is empty
+     * @return {@link WeaponSoundKey#HOLSTER_EMPTY} when the magazine is empty and that key is declared, otherwise
+     *         {@link WeaponSoundKey#HOLSTER}, otherwise {@code null}
+     */
+    public static WeaponSoundKey holsterKey(Map<String, ResourceId> sounds, boolean emptyMagazine) {
+        List<WeaponSoundKey> keys = holsterKeys(sounds, emptyMagazine);
+        return keys.isEmpty() ? null : keys.get(0);
+    }
+
+    /**
+     * Every key a holster may use for this weapon, best first; see {@link #drawKeys} for why the whole chain exists.
+     *
+     * @param sounds        the definition's raw {@code sounds} map, may be {@code null}
+     * @param emptyMagazine whether the magazine is empty
+     * @return the declared keys in priority order, never {@code null}; empty when the weapon declares neither
+     */
+    public static List<WeaponSoundKey> holsterKeys(Map<String, ResourceId> sounds, boolean emptyMagazine) {
+        List<WeaponSoundKey> keys = new ArrayList<>(2);
+        if (emptyMagazine && has(sounds, WeaponSoundKey.HOLSTER_EMPTY)) {
+            keys.add(WeaponSoundKey.HOLSTER_EMPTY);
+        }
+        if (has(sounds, WeaponSoundKey.HOLSTER)) {
+            keys.add(WeaponSoundKey.HOLSTER);
+        }
+        return List.copyOf(keys);
+    }
+
+    /**
+     * The key for a hit, from the hit's own facts.
+     *
+     * <p>A kill plays {@code entity_wasted} when it is declared; a non-lethal headshot plays {@code headshot}; a
+     * non-lethal body hit plays {@code entity_hit}. Every branch is independently optional, so a weapon that declares
+     * only {@code headshot} stays silent on a body hit.</p>
+     *
+     * @param sounds   the definition's raw {@code sounds} map, may be {@code null}
+     * @param headshot whether the hit landed in the entity's head region
+     * @param killed   whether the hit killed the entity
+     * @return the key to play, or {@code null} when the applicable key is not declared
+     */
+    public static WeaponSoundKey hitKey(Map<String, ResourceId> sounds, boolean headshot, boolean killed) {
+        if (killed) {
+            return has(sounds, WeaponSoundKey.ENTITY_WASTED) ? WeaponSoundKey.ENTITY_WASTED : null;
+        }
+        if (headshot) {
+            return has(sounds, WeaponSoundKey.HEADSHOT) ? WeaponSoundKey.HEADSHOT : null;
+        }
+        return has(sounds, WeaponSoundKey.ENTITY_HIT) ? WeaponSoundKey.ENTITY_HIT : null;
+    }
+
+    /**
+     * @param sounds the definition's raw {@code sounds} map, may be {@code null}
+     * @return the number of declared keys, for diagnostics
+     */
+    public static int size(Map<String, ResourceId> sounds) {
+        return sounds == null ? 0 : sounds.size();
+    }
+}

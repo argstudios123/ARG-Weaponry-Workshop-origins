@@ -1,0 +1,228 @@
+{
+  "weapon_name" : "m100_dmr",
+  "weapon_id": "arg_pack:m100_dmr",
+  "type" : "gun", //gun , melee , throwable
+  "ammo_to_use": ["dmr_ammo" ,"creative_ammo"],
+  "display": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr",
+  "damage" : 25,
+  "ammo_capacity": 20,
+  //"ammo_capacity": "unlimited",
+
+  "firing_mode": ["semi","auto","burst"],
+  "burst_count": 3,
+  "continuous_burst" : true,
+  "time_between_bursts" : 0.02,
+  "rpm":300,
+  "range": 96.0, // how much Far it can fire the range of the weapon
+
+  // For Recoil Values
+  "recoil": {
+    "kickback_recoil_amplitude": 0.02,
+    "screen_shake_Recoil_value": 0.8,
+    "screen_shake_recoil_speed": 0.5,
+    "vertical_recoil": 2.5,
+    "horizontal_recoil_left": 0.02, //Goes to left direction
+    "horizontal_recoil_right": 0.02 //goes to right direction
+  },
+
+
+
+  "custom_hud_ui": "default_pack_ui",
+
+  "aiming" : {
+    "enabled": true,
+    "aimimg_zoom": 0.5,
+    "aiming_zoom_type" : "smooth", //ease in ease out , ease in , linear
+    "no_aiming_on_inspect": true,
+    "no_aiming_on_reload": true
+  },
+    "reusable_default_animations": [
+      "default_animations/weapons/pistols/walking_animations"
+    ],
+  "glowing_weapon_parts": [
+    {
+      "name": "sights"
+    }
+  ],
+  
+  "sounds": {
+    "fire": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_fire",
+    "fire_suppressed": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_fire_suppressed",
+    "reload": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_reload",
+    "reload_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_reload_empty",
+    "inspect": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_inspect",
+    "inspect_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_inspect_empty",
+    "draw": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_inspect_empty",
+    "draw_first": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_draw_first",
+    "draw_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_draw_empty",
+    "holster": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_holster",
+    "holster_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_holster_empty",
+    "headshot": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_headshot",
+    "entity_hit": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_entity_hit",
+    "entity_wasted": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_entity_wasted"
+  },
+
+  "accuracy": {
+    "crouching":  0.3,
+    "walking":  0.7,
+    "standing":  0.2,
+    "aiming": 0.002
+  },
+  "sustained_firing_Recoil": {
+    "positionZCap": 0.32,  // weapon moves backward slightly each shot.
+    "positionZIncrement": 0.05, // after about 3 shots, it reaches the maximum sustained rearward movement.
+    "pitchIncrement": -0.04, // additional upward climb over sustained fire.
+    "positionYIncrement": 0.3 //  vertical displacement buildup.
+  },
+
+  "idle_anims": [
+    {
+      "name": "anim.model.idle",
+      "duration": 2.0,
+      "when": "ammoCount > 0"
+    },
+    {
+      "name": "anim.model.idle_empty",
+      "duration": 3.0,
+      "when": "ammoCount == 0"
+    }
+  ],
+
+  "inspect_anims": [
+    {
+      "name": "anim.model.inspect",
+      "duration": 11.46,
+      "when": "ammoCount > 0"
+    },
+    {
+      "name": "anim.model.inspect_empty",
+      "duration": 11.67,
+      "when": "ammoCount == 0"
+    }
+  ],
+
+  // Firing animation: one clip per shot, selected by the ammunition left after the shot.
+  "fire_anims": [
+    {
+      "name": "anim.model.fire",
+      "duration": 0.4833,
+      "when": "ammoCount > 0"
+    },
+    {
+      "name": "anim.model.fire_last",
+      "duration": 0.5333,
+      "when": "ammoCount == 0"
+    }
+  ],
+
+  "holster_anims": [
+    {
+      "name": "anim.model.holster",
+      "duration": 0.8,
+      "when": "ammoCount > 0"
+    },
+    {
+      "name": "anim.model.holster_empty",
+      "duration": 0.7,
+      "when": "ammoCount == 0"
+    }
+  ],
+
+  // Draw Animations also supports empty ones
+  "draw_anims": [
+    {
+      "draw_first": "anim.model.draw_first",
+      "duration": 1.2
+    },
+    {
+      "name": "anim.model.draw",
+      "duration": 0.87,
+      "when": "ammoCount > 0"
+    },
+    {
+      "name": "anim.model.draw_empty",
+      "duration": 0.89,
+      "when": "ammoCount == 0"
+    }
+  ],
+
+//  "supported_attachment_groups": [
+//    "scopes_default"
+//
+//  ],
+//  "supported_attachments": [
+//    "dmr_default_scope"
+//  ],
+
+  "reload_sequences": [
+    {
+      "phase": "reloading",
+      "animation": "anim.model.reload_empty",
+      "duration": 3.64,
+      "when": "reload_count == 0"
+    },
+    {
+      "phase": "reloading",
+      "when": "reload_count > 0",
+      "duration": 2.9,
+      "animation": "anim.model.reload"
+    }
+  ]
+
+
+  // THis is for Shotgun Reload i will keep it disabled
+//
+//  "reload_sequences": [
+//    {
+//      "stage": "prepare",
+//      "animation": "anim.model.reload_start_empty",
+//      "duration": 0.38,
+//      "when": "ammo_count == 0"
+//    },
+//    {
+//      "stage": "prepare",
+//      "animation": "anim.model.reload_start",
+//      "duration": 0.38,
+//      "when": "ammo_count > 0"
+//    },
+//    {
+//      "stage": "initial_load",
+//      "animation": "anim.model.load_first",
+//      "duration": 1.33,
+//      "when": "reload_inserted_count == 0"
+//    },
+//    {
+//      "stage": "repeat_load",
+//      "animation": "anim.model.reload_loop",
+//      "duration": 0.75,
+//      "repeat": true,
+//      "when": "reload_inserted_count > 0"
+//    },
+//    {
+//      "stage": "finish",
+//      "animation": "anim.model.reload_finish",
+//      "duration": 0.67
+//    }
+//  ]
+//
+
+//  //
+//  "reload_sequences": [
+//    {
+//      "phase": "start",
+//      "animation": "anim.model.reload_start",
+//      "duration": 0.8
+//    },
+//    {
+//      "phase": "insert",
+//      "animation": "anim.model.reload_shell",
+//      "duration": 0.6
+//    },
+//    {
+//      "phase": "end",
+//      "animation": "anim.model.reload_end",
+//      "duration": 0.7
+//    }
+//  ]
+
+}

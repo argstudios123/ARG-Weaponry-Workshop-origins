@@ -1,0 +1,6 @@
+{
+  "ammo_name" : "creative_ammo",
+  "ammo_id": "arg_pack:creative_ammo",
+  "type" : "ammo",
+  "display": "arg_pack:ammunition/creative_ammo"
+}

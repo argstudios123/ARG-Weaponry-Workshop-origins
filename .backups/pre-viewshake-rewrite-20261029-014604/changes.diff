@@ -1,0 +1,448 @@
+diff -ru '--exclude=build' '--exclude=runs' '--exclude=.gradle' .backups/pre-viewshake-rewrite-20261029-014604/common/build.gradle common/build.gradle
+--- .backups/pre-viewshake-rewrite-20261029-014604/common/build.gradle	2026-10-26 13:43:02.681602587 +0500
++++ common/build.gradle	2026-10-29 01:50:43.023338844 +0500
+@@ -20,6 +20,18 @@
+     compileOnly('net.fabricmc:sponge-mixin:0.17.3+mixin.0.8.7')
+     // Fabric and NeoForge both bundle MixinExtras, so it is safe to use it in common
+     compileOnly(annotationProcessor('io.github.llamalad7:mixinextras-common:0.5.3'))
++
++    // Headless tests for the recoil curves and the camera composition. ModDevGradle deliberately keeps Minecraft off the
++    // test classpath, so the libraries the code under test actually uses are declared here, at the versions Minecraft 26.3
++    // itself pins. All of them are test-only: nothing is added to the published jar and no runtime dependency is introduced.
++    testImplementation('org.junit.jupiter:junit-jupiter:5.11.4')
++    testImplementation('org.joml:joml:1.10.9')
++    testImplementation('com.google.code.gson:gson:2.14.0')
++    testRuntimeOnly('org.junit.platform:junit-platform-launcher:1.11.4')
++}
++
++tasks.named('test') {
++    useJUnitPlatform()
+ }
+ 
+ configurations {
+diff -ru '--exclude=build' '--exclude=runs' '--exclude=.gradle' .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfile.java common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfile.java
+--- .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfile.java	2026-10-29 01:06:39.232977823 +0500
++++ common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/RecoilProfile.java	2026-10-29 01:50:01.420939955 +0500
+@@ -21,9 +21,13 @@
+  *       <td>{@link PlayerRecoilController}</td>
+  *       <td>Sideways view impulse of one accepted shot, chosen once per shot.</td></tr>
+  *   <tr><td>{@code screen_shake_Recoil_value}</td><td>degrees</td><td>{@link ViewShakeController}</td>
+- *       <td>Peak amplitude of the camera-only shake. It never moves the player's aim, and zero disables it.</td></tr>
+- *   <tr><td>{@code screen_shake_recoil_speed}</td><td>per second</td><td>{@link ViewShakeController}</td>
+- *       <td>Decay rate of that shake: the amplitude falls by a factor of {@code e} every {@code 1 / speed} seconds.</td></tr>
++ *       <td>Peak amplitude of the camera-only shake. It never moves the player's aim, and zero disables it. The per-shot
++ *       response draws its signed yaw and roll from {@code [A, 2A)} on each channel, following Point Blank's
++ *       {@code ViewShakeAnimationController}.</td></tr>
++ *   <tr><td>{@code screen_shake_recoil_speed}</td><td>half periods per shake</td><td>{@link ViewShakeController}</td>
++ *       <td>Oscillation rate of that shake: the angles follow {@code sin(π · speed · progress)}, exactly as Point Blank's
++ *       {@code shakeRecoilSpeed} does, so a larger value flutters faster <em>without</em> shortening the shake. It is not a
++ *       decay constant; the shake always lasts {@link ViewShakeResponse#DEFAULT_DURATION_SECONDS} seconds.</td></tr>
+  * </table>
+  *
+  * <h2>Sustained fire</h2>
+@@ -37,7 +41,8 @@
+  *                               the enable switch, and it exists so a missing property can never be confused with a
+  *                               configured zero
+  * @param shakeDegrees           peak camera-only shake, in degrees
+- * @param shakeSpeed             exponential decay rate of the shake, in per-second units
++ * @param shakeSpeed             oscillation rate of the shake, in half periods across the whole response - Point Blank's
++ *                               {@code shakeRecoilSpeed}; not a decay rate
+  * @param verticalDegrees        upward view impulse of one shot, in degrees of pitch
+  * @param horizontalLeftDegrees  leftward view impulse of one shot, in degrees of yaw
+  * @param horizontalRightDegrees rightward view impulse of one shot, in degrees of yaw
+@@ -53,12 +58,26 @@
+     /** The largest shake amplitude one configuration can reach, in degrees. */
+     public static final double MAX_SHAKE_DEGREES = 8.0;
+ 
++    /**
++     * Oscillation rate used when {@code screen_shake_recoil_speed} is absent or not positive, in half periods per shake.
++     *
++     * <p>This is Point Blank's own {@code DEFAULT_SHAKE_RECOIL_SPEED} ({@code 8.0}), which the mod applies when a fire mode
++     * declares a shake without declaring a speed, so an ARG weapon that configures only
++     * {@code screen_shake_Recoil_value} behaves like a Point Blank weapon with the same amplitude.</p>
++     */
++    public static final double DEFAULT_SHAKE_SPEED = 8.0;
++
++    /**
++     * Largest accepted oscillation rate, in half periods per shake.
++     *
++     * <p>The same cap the previous decay-rate interpretation used, kept so no existing configuration changes meaning: at the
++     * reference's 350 ms duration it is fifty full swings, which is already faster than any frame rate can show.</p>
++     */
++    public static final double MAX_SHAKE_SPEED = 100.0;
++
+     /** The upper bound of one view impulse, in degrees, so a typo cannot spin the player around. */
+     public static final double MAX_VIEW_IMPULSE_DEGREES = 45.0;
+ 
+-    /** Decay rate used when {@code screen_shake_recoil_speed} is absent or not positive, in per-second units. */
+-    public static final double DEFAULT_SHAKE_SPEED = 6.0;
+-
+     /** The neutral profile: no recoil at all, and kickback explicitly not configured. */
+     public static final RecoilProfile NONE = new RecoilProfile(0.0, false, 0.0, 0.0, 0.0, 0.0, 0.0, Sustained.NONE);
+ 
+@@ -68,7 +87,7 @@
+         // difference between "absent" and "configured zero" remains observable; hasKickback() is what decides whether any
+         // movement happens.
+         shakeDegrees = clamp(shakeDegrees, 0.0, MAX_SHAKE_DEGREES);
+-        shakeSpeed = Double.isFinite(shakeSpeed) && shakeSpeed > 0.0 ? Math.min(shakeSpeed, 100.0)
++        shakeSpeed = Double.isFinite(shakeSpeed) && shakeSpeed > 0.0 ? Math.min(shakeSpeed, MAX_SHAKE_SPEED)
+                 : DEFAULT_SHAKE_SPEED;
+         verticalDegrees = clamp(verticalDegrees, -MAX_VIEW_IMPULSE_DEGREES, MAX_VIEW_IMPULSE_DEGREES);
+         horizontalLeftDegrees = clamp(horizontalLeftDegrees, 0.0, MAX_VIEW_IMPULSE_DEGREES);
+@@ -97,8 +116,21 @@
+         if (definition == null) {
+             return NONE;
+         }
+-        WeaponDefinition.Recoil recoil = definition.recoil();
+-        Sustained sustained = Sustained.of(definition.sustainedFiringRecoil());
++        return of(definition.recoil(), definition.sustainedFiringRecoil());
++    }
++
++    /**
++     * Resolves the profile from the two parsed JSON blocks.
++     *
++     * <p>Separated from {@link #of(WeaponDefinition)} so the resolution rules - absent versus configured zero, the
++     * horizontal precedence, the shake defaults - can be exercised without a whole weapon definition.</p>
++     *
++     * @param recoil           the {@code recoil} block, may be {@code null} when the weapon declares none
++     * @param sustainedRecoil  the {@code sustained_firing_Recoil} block, may be {@code null}
++     * @return the profile, never {@code null}
++     */
++    public static RecoilProfile of(WeaponDefinition.Recoil recoil, WeaponDefinition.SustainedRecoil sustainedRecoil) {
++        Sustained sustained = Sustained.of(sustainedRecoil);
+         if (recoil == null) {
+             // No recoil object at all: nothing is configured, so kickback stays disabled even if a sustained block
+             // happens to be present.
+diff -ru '--exclude=build' '--exclude=runs' '--exclude=.gradle' .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeController.java common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeController.java
+--- .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeController.java	2026-10-29 00:29:33.010571962 +0500
++++ common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/ViewShakeController.java	2026-10-29 01:49:42.327756888 +0500
+@@ -1,128 +1,143 @@
+ package com.arg_studios.arg_weaponry.client.recoil;
+ 
+-import net.minecraft.util.RandomSource;
+-
+ /**
+  * Controller C: the screen shake - a bounded, camera-only response with no permanent effect.
+  *
+- * <p>Point Blank keeps a view-shake controller apart from its player-recoil controller, and ARG Weaponry does the same:
+- * this layer owns a temporary offset added to the rendered camera only. It never writes the player's pitch or yaw, so
+- * it cannot fight the mouse, and it never touches the authored camera-bone animation - the camera hook composes it
+- * <em>after</em> that animation, about the camera's own axes.</p>
++ * <p>Point Blank keeps a view-shake controller apart from its player-recoil controller, and ARG Weaponry does the same: this
++ * layer owns a temporary offset added to the rendered camera only. It never writes the player's pitch or yaw, so it cannot
++ * fight the mouse, and it never touches the authored camera-bone animation - the camera hook composes it <em>after</em> that
++ * animation, about the camera's own axes.</p>
++ *
++ * <h2>What changed in this controller, and why</h2>
++ * <p>The previous version drove the shake from an exponentially decaying mutable amplitude whose decay constant was the
++ * configured {@code screen_shake_recoil_speed} ({@code e}-fold every {@code 1 / speed} seconds) and oscillated at a fixed
++ * 26 rad/s, with pitch as the main channel. That is not what the reference does: Point Blank's
++ * {@code ViewShakeAnimationController} oscillates at {@code sin(π · speed · progress)} - the configured speed <em>is</em> the
++ * oscillation rate - fades over a fixed duration, and never contributes pitch. Because the configured speed was read as a
++ * decay constant, raising it made the shake vanish sooner and lower made it linger, which is why no value of amplitude and
++ * speed could reproduce the reference's brief flutter.</p>
++ *
++ * <p>This controller now owns nothing but a clock and one {@link ViewShakeResponse} per shot:</p>
++ * <ul>
++ *   <li>a shot <em>replaces</em> the running shake, exactly as {@code GunItem$11#onStartFiring} re-arms the reference's
++ *   controller, so sustained fire cannot accumulate displacement;</li>
++ *   <li>{@link #tick(double)} only advances elapsed time, and clamps at the response's duration;</li>
++ *   <li>{@link #sample(float)} is a pure function of (response, interpolated elapsed time): the same sample request always
++ *   returns the same angles, and rendering a frame twice cannot advance or amplify anything;</li>
++ *   <li>the angles come from {@link ViewShakeResponse}, which is closed-form, so the effect reaches exactly zero at the end
++ *   of the duration and leaves no residual yaw or roll behind.</li>
++ * </ul>
+  *
+- * <h2>Time-based, not frame-based</h2>
+- * <p>The amplitude decays exponentially with the configured {@code screen_shake_recoil_speed} ({@code e}-fold every
+- * {@code 1 / speed} seconds) and the angles are a closed-form function of the interpolated elapsed time and amplitude.
+- * The same elapsed time always produces the same offset, so a frame that renders twice cannot make the shake wobble
+- * faster. A zero {@code screen_shake_Recoil_value} produces no shake at all.</p>
++ * <h2>No pitch channel</h2>
++ * <p>{@link ShakeAngles} still carries a pitch component, because it is the shared value type of the camera-composition
++ * helper, but this controller always reports it as zero. A vertical impulse belongs to {@link PlayerRecoilController}, the
++ * player's own view recoil, and duplicating it here would double the kick.</p>
+  */
+ public final class ViewShakeController {
+ 
+-    /** Angular frequency of the shake, in radians per second. */
+-    public static final double FREQUENCY_RADIANS_PER_SECOND = 26.0;
+-
+-    /** How much of the pitch amplitude the yaw offset uses. */
+-    public static final double YAW_FRACTION = 0.6;
+-
+-    /** How much of the pitch amplitude the roll offset uses. */
+-    public static final double ROLL_FRACTION = 0.4;
+-
+-    /** Hard upper bound of a shake's lifetime, in seconds, so nothing can wobble forever. */
+-    public static final double MAX_DURATION_SECONDS = 1.5;
++    /** Largest time step one tick may advance the shake, in seconds, so a long stall cannot skip the whole effect. */
++    public static final double MAX_STEP_SECONDS = 0.25;
+ 
+-    private double amplitude;
+-    private double previousAmplitude;
++    private ViewShakeResponse response = ViewShakeResponse.NONE;
+     private double elapsed;
+     private double previousElapsed;
+-    private double speed = RecoilProfile.DEFAULT_SHAKE_SPEED;
+-    private double phasePitch;
+-    private double phaseYaw;
+-    private double phaseRoll;
+ 
+     /**
+      * Applies one accepted shot.
+      *
+-     * @param profile the weapon's profile, may be {@code null}
+-     * @param random  the gameplay random source; advanced once per shot for the phases, never per frame
++     * <p>The response replaces whatever shake was running, as the reference's {@code onStartFiring} does for every shot, so
++     * automatic fire produces one brief flutter per round instead of a growing wobble. A shot that asks for no shake is
++     * ignored rather than cancelling an active one, so a weapon without {@code screen_shake_Recoil_value} simply never
++     * produces screen shake.</p>
++     *
++     * @param shot the shot's shake, may be {@code null} or {@link ViewShakeResponse#NONE}
+      */
+-    public void shot(RecoilProfile profile, RandomSource random) {
+-        if (profile == null || !profile.hasShake()) {
++    public void onShot(ViewShakeResponse shot) {
++        if (shot == null || shot.isZero()) {
+             return;
+         }
+-        speed = profile.shakeSpeed();
+-        amplitude = Math.min(RecoilProfile.MAX_SHAKE_DEGREES, amplitude + profile.shakeDegrees());
+-        // A shot is an instantaneous impulse, so both interpolation samples jump together instead of ramping in.
+-        previousAmplitude = amplitude;
++        response = shot;
+         elapsed = 0.0;
+         previousElapsed = 0.0;
+-        phasePitch = random == null ? 0.0 : random.nextDouble() * Math.PI * 2.0;
+-        phaseYaw = random == null ? 0.0 : random.nextDouble() * Math.PI * 2.0;
+-        phaseRoll = random == null ? 0.0 : random.nextDouble() * Math.PI * 2.0;
+     }
+ 
+     /**
+      * Advances the layer by one client tick.
+      *
+-     * @param deltaSeconds the elapsed time; non-finite or negative values advance nothing
++     * <p>Only the clock moves. Elapsed time is clamped to the response's duration, so the shake can never outlive it, and the
++     * finished response is dropped on the following tick - sampling before then still renders the tail that belongs to the
++     * interpolation interval the frame is in.</p>
++     *
++     * @param deltaSeconds the elapsed time; non-finite or non-positive values advance nothing
+      */
+     public void tick(double deltaSeconds) {
+-        if (!Double.isFinite(deltaSeconds) || deltaSeconds <= 0.0) {
++        if (response.isZero()) {
+             return;
+         }
+-        double delta = Math.min(deltaSeconds, 0.25);
+-        previousAmplitude = amplitude;
+-        previousElapsed = elapsed;
+-        if (amplitude <= 0.0) {
++        if (!Double.isFinite(deltaSeconds) || deltaSeconds <= 0.0) {
+             return;
+         }
+-        elapsed += delta;
+-        amplitude *= Math.exp(-delta * speed);
+-        if (amplitude < 1.0E-4 || elapsed >= MAX_DURATION_SECONDS) {
+-            amplitude = 0.0;
+-            previousAmplitude = 0.0;
++        if (elapsed >= response.durationSeconds()) {
++            reset();
++            return;
+         }
++        previousElapsed = elapsed;
++        elapsed = Math.min(response.durationSeconds(), elapsed + Math.min(deltaSeconds, MAX_STEP_SECONDS));
+     }
+ 
+     /**
++     * Samples the shake of one rendered frame.
++     *
++     * <p>The elapsed time is interpolated with the frame's partial tick, so the flutter is smooth at any frame rate, and the
++     * result is a pure function of the stored state: no field is written, so a frame that is rendered twice produces the same
++     * angles twice and nothing accumulates.</p>
++     *
+      * @param partialTick the frame's partial tick, clamped to {@code [0, 1]}
+      * @return the camera-only shake of this frame; {@link ShakeAngles#NONE} when no shake is active
+      */
+     public ShakeAngles sample(float partialTick) {
+-        if (amplitude <= 0.0 && previousAmplitude <= 0.0) {
++        if (response.isZero()) {
++            return ShakeAngles.NONE;
++        }
++        float tick = Float.isFinite(partialTick) ? Math.max(0.0F, Math.min(1.0F, partialTick)) : 0.0F;
++        double sampleTime = previousElapsed + (elapsed - previousElapsed) * tick;
++        if (response.isFinished(sampleTime)) {
++            // The shake has run its full duration: report exactly nothing, not a rounded-down remnant.
+             return ShakeAngles.NONE;
+         }
+-        float t = Float.isFinite(partialTick) ? Math.max(0.0F, Math.min(1.0F, partialTick)) : 0.0F;
+-        double currentAmplitude = previousAmplitude + (amplitude - previousAmplitude) * t;
+-        double currentElapsed = previousElapsed + (elapsed - previousElapsed) * t;
+-        if (currentAmplitude <= 0.0) {
++        double yaw = response.yawAt(sampleTime);
++        double roll = response.rollAt(sampleTime);
++        if (yaw == 0.0 && roll == 0.0) {
+             return ShakeAngles.NONE;
+         }
+-        double phase = currentElapsed * FREQUENCY_RADIANS_PER_SECOND;
+-        return new ShakeAngles(
+-                currentAmplitude * Math.sin(phase + phasePitch),
+-                currentAmplitude * YAW_FRACTION * Math.sin(phase * 0.83 + phaseYaw),
+-                currentAmplitude * ROLL_FRACTION * Math.sin(phase * 1.21 + phaseRoll));
++        return new ShakeAngles(0.0, yaw, roll);
+     }
+ 
+-    /** @return the shake amplitude of the last completed tick, in degrees. */
++    /**
++     * @return the amplitude of the shake at the last completed tick, in degrees, for diagnostics only
++     */
+     public double amplitude() {
+-        return amplitude;
++        if (response.isZero()) {
++            return 0.0;
++        }
++        return response.peakMagnitudeAt(Math.min(elapsed, response.durationSeconds()));
+     }
+ 
+     /** @return whether the layer still has anything to contribute. */
+     public boolean isActive() {
+-        return amplitude > 0.0;
++        return !response.isZero() && elapsed < response.durationSeconds();
++    }
++
++    /** @return the response currently being sampled, for diagnostics and tests; {@link ViewShakeResponse#NONE} when idle. */
++    public ViewShakeResponse response() {
++        return response;
+     }
+ 
+     /** Drops the shake. */
+     public void reset() {
+-        amplitude = 0.0;
+-        previousAmplitude = 0.0;
++        response = ViewShakeResponse.NONE;
+         elapsed = 0.0;
+         previousElapsed = 0.0;
+-        phasePitch = 0.0;
+-        phaseYaw = 0.0;
+-        phaseRoll = 0.0;
+     }
+ 
+     /**
+Only in common/src/main/java/com/arg_studios/arg_weaponry/client/recoil: ViewShakeResponse.java
+diff -ru '--exclude=build' '--exclude=runs' '--exclude=.gradle' .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/WeaponRecoil.java common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/WeaponRecoil.java
+--- .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/WeaponRecoil.java	2026-10-29 01:11:05.253534409 +0500
++++ common/src/main/java/com/arg_studios/arg_weaponry/client/recoil/WeaponRecoil.java	2026-10-29 01:50:13.015051120 +0500
+@@ -1,12 +1,13 @@
+ package com.arg_studios.arg_weaponry.client.recoil;
+ 
++import java.util.Random;
++
+ import com.arg_studios.arg_weaponry.client.diagnostics.TransformDiagnostics;
+ import com.arg_studios.arg_weaponry.item.WeaponItem;
+ import net.minecraft.client.Minecraft;
+ import net.minecraft.client.player.LocalPlayer;
+ import net.minecraft.core.registries.BuiltInRegistries;
+ import net.minecraft.util.Mth;
+-import net.minecraft.util.RandomSource;
+ import net.minecraft.world.InteractionHand;
+ import net.minecraft.world.item.ItemStack;
+ 
+@@ -21,8 +22,8 @@
+  *   <li><strong>player/view recoil</strong> ({@link PlayerRecoilController}) - a time-shaped response added to the
+  *   player's own angles <em>as a delta</em>, so mouse movement stays live and nothing is restored from a captured
+  *   value.</li>
+- *   <li><strong>screen shake</strong> ({@link ViewShakeController}) - a bounded, camera-only offset sampled from elapsed
+- *   time.</li>
++ *   <li><strong>screen shake</strong> ({@link ViewShakeController}) - a bounded, camera-only yaw/roll flutter that is
++ *   sampled from elapsed time and lasts one {@link ViewShakeResponse#DEFAULT_DURATION_SECONDS}-second response per shot.</li>
+  * </ol>
+  * <p>This is the separation Point Blank uses - a gun-recoil controller, a player-recoil controller and a view-shake
+  * controller with separate state - and it is what keeps the three effects from overwriting each other. The layers are
+@@ -50,7 +51,14 @@
+     private static final WeaponKickbackController KICKBACK = new WeaponKickbackController();
+     private static final PlayerRecoilController VIEW = new PlayerRecoilController();
+     private static final ViewShakeController SHAKE = new ViewShakeController();
+-    private static final RandomSource RANDOM = RandomSource.create();
++
++    /**
++     * The client's shot randomness: the sideways direction of the view recoil and the direction and magnitude of the shake.
++     *
++     * <p>Advanced once per accepted shot, never per frame, so a shot's response is fixed the moment it is created and can be
++     * sampled any number of times without the effect drifting.</p>
++     */
++    private static final Random RANDOM = new Random();
+ 
+     private static String ownerItemId;
+ 
+@@ -82,8 +90,9 @@
+         // omits `kickback_recoil_amplitude` (or sets it to 0) is exactly as if this layer did not exist.
+         KICKBACK.shot(profile);
+ 
+-        // Layer C: the camera-only shake.
+-        SHAKE.shot(profile, RANDOM);
++        // Layer C: the camera-only shake. One response per shot, drawn from the configured amplitude and speed exactly the
++        // way Point Blank's controller draws it, so a new shot replaces the running flutter instead of accumulating on it.
++        SHAKE.onShot(ViewShakeResponse.forShot(profile.shakeDegrees(), profile.shakeSpeed(), RANDOM));
+ 
+         // Layer B: the player/view response. The direction of the horizontal part is chosen here, once per shot, so the
+         // response is a deterministic function of elapsed time from this moment on.
+diff -ru '--exclude=build' '--exclude=runs' '--exclude=.gradle' .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/mixin/client/CameraMixin.java common/src/main/java/com/arg_studios/arg_weaponry/mixin/client/CameraMixin.java
+--- .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/java/com/arg_studios/arg_weaponry/mixin/client/CameraMixin.java	2026-10-29 00:30:39.917216004 +0500
++++ common/src/main/java/com/arg_studios/arg_weaponry/mixin/client/CameraMixin.java	2026-10-29 01:53:29.717937129 +0500
+@@ -97,7 +97,8 @@
+         // frame, so it cannot accumulate, and it never touches the player's own view rotation. It is composed as a
+         // rotation about the camera's own axes *after* the authored animation, so it cannot discard that animation's
+         // roll and cannot mix yaw into roll at a non-zero pitch - both of which the previous angle-rewriting version did
+-        // for every frame the shake was active.
++        // for every frame the shake was active. The response itself is yaw and roll only, and it reaches exactly zero
++        // when its duration is spent, so the camera the next frame starts from is vanilla's own again.
+         if (!firstPerson || !ownCamera) {
+             return;
+         }
+diff -ru '--exclude=build' '--exclude=runs' '--exclude=.gradle' .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/resources/assets/arg_weaponry/weapon_packs/arg_default_pack/assets/arg_pack/weapons_registry/weapons/dmrs/m100_dmr.json common/src/main/resources/assets/arg_weaponry/weapon_packs/arg_default_pack/assets/arg_pack/weapons_registry/weapons/dmrs/m100_dmr.json
+--- .backups/pre-viewshake-rewrite-20261029-014604/common/src/main/resources/assets/arg_weaponry/weapon_packs/arg_default_pack/assets/arg_pack/weapons_registry/weapons/dmrs/m100_dmr.json	2026-10-29 01:43:26.302151516 +0500
++++ common/src/main/resources/assets/arg_weaponry/weapon_packs/arg_default_pack/assets/arg_pack/weapons_registry/weapons/dmrs/m100_dmr.json	2026-10-29 01:50:19.530113588 +0500
+@@ -5,15 +5,13 @@
+   "ammo_to_use": ["dmr_ammo" ,"creative_ammo"],
+   "display": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr",
+   "damage" : 25,
+-  "ammo_capacity": 20,
+-  //"ammo_capacity": "unlimited",
+-
++  "ammo_capacity": 20,   //"ammo_capacity": "unlimited",
+   "firing_mode": ["semi","auto","burst"],
+   "burst_count": 3,
+   "continuous_burst" : true,
+   "time_between_bursts" : 0.02,
+   "rpm":300,
+-  "range": 96.0, // how much Far it can fire the range of the weapon
++  "range": 195.0, // how much Far it can fire the range of the weapon
+ 
+   // For Recoil Values
+   "recoil": {
+@@ -25,14 +23,21 @@
+     "horizontal_recoil_right": 0.02 //goes to right direction
+   },
+ 
+-
+-
+   "custom_hud_ui": "default_pack_ui",
+ 
+   "aiming" : {
+     "enabled": true,
+     "aimimg_zoom": 0.5,
+-    "aiming_zoom_type" : "smooth", //ease in ease out , ease in , linear
++    "aiming_zoom_type" : "ease_in_out",
++//    linear	Constant transition speed.
++//    2	smooth	Smooth acceleration and deceleration.
++//    3	ease_in	Starts slowly and speeds up.
++//    4	ease_out	Starts quickly and slows down.
++//    5	ease_in_out	Starts slowly, speeds up, then slows down.
++//    6	sine_in	Sine-based easing, slow at the start.
++//    7	sine_out	Sine-based easing, slow at the end.
++//    8	sine_in_out
++
+     "no_aiming_on_inspect": true,
+     "no_aiming_on_reload": true
+   },
+Only in common/src: test

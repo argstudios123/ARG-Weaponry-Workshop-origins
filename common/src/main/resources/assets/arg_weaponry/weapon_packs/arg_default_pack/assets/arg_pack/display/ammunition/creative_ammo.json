@@ -1,0 +1,12 @@
+// Display definition for the universal creative ammunition item.
+//
+// "render": "item" selects the conventional 2D Minecraft item mode: the item is drawn by Minecraft's normal
+// item model path, using the baked model of the item id in "item_model". No Bedrock geometry, no texture and
+// no custom renderer is involved, so this document needs no artwork of its own.
+//
+// "item_model" may name any item whose baked model exists (a vanilla item, or an item from a normally mounted
+// resource pack). Replace it to give this ammunition a different icon; nothing else has to change.
+{
+  "render": "item",
+  "item_model": "minecraft:gunpowder"
+}

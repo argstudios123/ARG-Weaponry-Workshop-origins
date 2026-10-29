@@ -1,0 +1,14 @@
+{
+  "item.arg_weaponry.dev_m100_dmr": "Development M100 DMR",
+  "key.category.arg_weaponry.weapons": "ARG Weaponry",
+  "key.arg_weaponry.animation_tester": "Open Animation Tester (Ctrl + Alt + J, development only)",
+  "key.arg_weaponry.reload": "Reload Weapon",
+  "key.arg_weaponry.fire_mode": "Cycle Weapon Fire Mode",
+  "arg_weaponry.fire_mode.changed": "Fire mode: %s",
+  "arg_weaponry.fire_mode.single": "Semi-Automatic",
+  "arg_weaponry.fire_mode.burst": "Burst",
+  "arg_weaponry.fire_mode.auto": "Automatic",
+  "key.arg_weaponry.inspect": "Inspect Weapon",
+  "key.arg_weaponry.fire": "Fire Weapon",
+  "key.arg_weaponry.aim": "Aim Down Sights"
+}

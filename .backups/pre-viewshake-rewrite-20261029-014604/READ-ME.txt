@@ -1,0 +1,29 @@
+ARG Weaponry - screen-shake rewrite (Point Blank reference)
+==========================================================
+Snapshot taken before any edit, 2026-10-29 01:46, of the common/, fabric/ and neoforge/ project trees
+(build outputs, runs/ and .gradle/ excluded, since they are generated).
+
+Contents
+--------
+common/, fabric/, neoforge/    the trees exactly as they were before the change
+FILES-BEFORE.sha256            sha256 of every file in those trees at snapshot time
+FILES-AFTER.sha256             sha256 of every file after the change
+CHANGED-FILES.txt              added/removed files (path-level) between the two manifests
+changes.diff                   unified diff of the whole change (backup -> current)
+
+Restore everything
+------------------
+  cd "<project root>"
+  rsync -a --delete .backups/pre-viewshake-rewrite-20261029-014604/common/   common/
+  rsync -a --delete .backups/pre-viewshake-rewrite-20261029-014604/fabric/   fabric/
+  rsync -a --delete .backups/pre-viewshake-rewrite-20261029-014604/neoforge/ neoforge/
+
+Restore the source files only (keep build outputs)
+--------------------------------------------------
+  rsync -a .backups/pre-viewshake-rewrite-20261029-014604/common/src/ common/src/
+
+Note on one file this task did not touch
+----------------------------------------
+common/src/main/resources/.../weapons_registry/weapons/dmrs/m100_dmr.json appears in changes.diff,
+but it was edited outside this task at 01:50:19 (the "range" value 96 -> 195 and the aiming easing
+comment block). No recoil property was touched by that edit and none was touched by this task.

@@ -1,0 +1,20 @@
+// Development-only weapon definition.
+//
+// This file is NOT a content pack. It lives outside assets/ (so it can never be discovered as pack
+// content) and is only read when DevelopmentWeapons.isEnabled() is true, which means a development
+// environment or -Darg_weaponry.dev_weapons=true.
+//
+// It deliberately reuses the real default pack's display, model and texture resources, so holding
+// this item exercises exactly the same load, cache, anchor and draw path as a production weapon.
+// The original dmr_ammo.json is untouched.
+{
+  "weapon_name": "dev_m100_dmr",
+  "weapon_id": "arg_weaponry:dev_m100_dmr",
+  "type": "gun",
+  "ammo_to_use": ["dmr_ammo"],
+  "display": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr",
+  "damage": 6,
+  "ammo_capacity": 20,
+  "rpm": 300
+}
+

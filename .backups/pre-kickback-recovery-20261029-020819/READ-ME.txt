@@ -1,0 +1,23 @@
+ARG Weaponry - weapon kickback recovery (Point Blank-independent fix)
+=====================================================================
+Snapshot taken before any edit, 2026-10-29 02:08, of the common/, fabric/ and neoforge/ trees
+(build outputs, runs/ and .gradle/ excluded, since they are generated).
+
+Contents
+--------
+common/, fabric/, neoforge/    the trees exactly as they were before the change
+FILES-BEFORE.sha256            sha256 of every file at snapshot time
+FILES-AFTER.sha256             sha256 of every file after the change
+CHANGED-FILES.txt              what changed and why
+changes.diff                   unified diff of the whole change (backup -> current)
+
+Restore everything
+------------------
+  cd "<project root>"
+  rsync -a --delete .backups/pre-kickback-recovery-20261029-020819/common/   common/
+  rsync -a --delete .backups/pre-kickback-recovery-20261029-020819/fabric/   fabric/
+  rsync -a --delete .backups/pre-kickback-recovery-20261029-020819/neoforge/ neoforge/
+
+Restore the sources only (keep build outputs)
+---------------------------------------------
+  rsync -a .backups/pre-kickback-recovery-20261029-020819/common/src/ common/src/

@@ -1,0 +1,6 @@
+{
+  "ammo_name" : "dmr_ammo",
+  "ammo_id": "arg_pack:dmr_ammo",
+  "type" : "ammo",
+  "display": "arg_pack:ammunition/dmrs_ammo/dmr_ammo"
+}
