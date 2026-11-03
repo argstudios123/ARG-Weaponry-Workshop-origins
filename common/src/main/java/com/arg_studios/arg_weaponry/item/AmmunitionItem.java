@@ -20,9 +20,9 @@ import net.minecraft.world.item.ItemStack;
  * per-definition property without a demonstrated need would only create content packs that disagree.</p>
  *
  * <h2>Name</h2>
- * <p>The item shows its logical {@code ammo_name} as a literal name. Content-pack language files are not
- * loaded by this framework yet, so a translation key would be shown verbatim; the logical name is the one
- * string a creator already wrote and can therefore recognise.</p>
+ * <p>The item shows the translation key {@code item.<namespace>.<ammo_id>}, which the content pack translates in its own
+ * {@code assets/<namespace>/lang/en_us.json}. When the pack does not translate it, {@link ItemNames} falls back to the
+ * declared {@code ammo_name}, humanised - a raw key is never shown.</p>
  */
 public class AmmunitionItem extends Item {
 
@@ -60,6 +60,7 @@ public class AmmunitionItem extends Item {
 
     @Override
     public Component getName(ItemStack itemStack) {
-        return Component.literal(definition.ammoName());
+        // A translated name when the content pack provides one, otherwise the declared logical name - never a raw key.
+        return ItemNames.of(getDescriptionId(), definition.ammoName());
     }
 }

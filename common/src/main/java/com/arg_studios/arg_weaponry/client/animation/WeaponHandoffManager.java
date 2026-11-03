@@ -53,6 +53,26 @@ public final class WeaponHandoffManager {
     }
 
     /**
+     * Observes the selection just before a first-person frame is drawn, so a slot change that arrived between two ticks is
+     * resolved before that frame samples a pose.
+     *
+     * <p>Called from the first-person weapon pass; it costs one pure lookup per frame and does nothing while a transition is
+     * running.</p>
+     */
+    public void beforeFirstPersonFrame() {
+        controller.observeBeforeRender();
+    }
+
+    /**
+     * Reports that a first-person frame is drawing one weapon, so an armed draw clip can start on that exact frame.
+     *
+     * @param rendered the identity of the weapon that frame is drawing, may be {@code null}
+     */
+    public void onWeaponRendered(WeaponIdentity rendered) {
+        controller.notifyWeaponRendered(rendered);
+    }
+
+    /**
      * Handles one requested switch.
      *
      * @param player     the local player, may be {@code null}
@@ -105,6 +125,16 @@ public final class WeaponHandoffManager {
      * @param minecraft the client
      */
     public void clientTick(Minecraft minecraft) {
+        clientTick(minecraft, false);
+    }
+
+    /**
+     * Advances the subsystem by one client tick, including the aiming state of the weapon being drawn.
+     *
+     * @param minecraft the client
+     * @param aiming    whether the player is holding aim right now
+     */
+    public void clientTick(Minecraft minecraft, boolean aiming) {
         LocalPlayer player = minecraft == null ? null : minecraft.player;
         boolean runnable = player != null && minecraft.level != null && player.isAlive() && !player.isSpectator()
                 && DrawHolsterConfig.get().handoffEnabled();
@@ -118,7 +148,7 @@ public final class WeaponHandoffManager {
             return;
         }
         idle = false;
-        VisualWeapons.instance().tick(elapsedSeconds());
+        VisualWeapons.instance().tick(elapsedSeconds(), aiming);
         controller.tick();
     }
 

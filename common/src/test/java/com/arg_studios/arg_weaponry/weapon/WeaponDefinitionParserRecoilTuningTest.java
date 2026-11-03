@@ -36,7 +36,8 @@ class WeaponDefinitionParserRecoilTuningTest {
                 "smoothing": 0.5,
                 "recovery_speed": 0.15,
                 "aim_multiplier": 0.6,
-                "crouch_multiplier": 0.8
+                "crouch_multiplier": 0.8,
+                "kickback_aiming_modifier": 0.06
               }
             }
             """;
@@ -69,6 +70,7 @@ class WeaponDefinitionParserRecoilTuningTest {
         assertEquals(0.15, recoil.recoverySpeed());
         assertEquals(0.6, recoil.aimMultiplier());
         assertEquals(0.8, recoil.crouchMultiplier());
+        assertEquals(0.06, recoil.kickbackAimingModifier());
     }
 
     @Test
@@ -80,12 +82,15 @@ class WeaponDefinitionParserRecoilTuningTest {
         assertNull(recoil.recoverySpeed());
         assertNull(recoil.aimMultiplier());
         assertNull(recoil.crouchMultiplier());
+        assertNull(recoil.kickbackAimingModifier(), "an older definition does not declare the new modifier either");
 
         RecoilProfile profile = RecoilProfile.of(recoil, null);
         assertEquals(PlayerRecoilController.DEFAULT_SMOOTHING, profile.smoothing());
         assertEquals(RecoilProfile.DEFAULT_RECOVERY_SPEED, profile.recoverySpeed());
         assertEquals(RecoilProfile.DEFAULT_AIM_MULTIPLIER, profile.aimMultiplier());
         assertEquals(RecoilProfile.DEFAULT_CROUCH_MULTIPLIER, profile.crouchMultiplier());
+        assertEquals(RecoilProfile.DEFAULT_KICKBACK_AIMING_MODIFIER, profile.kickbackAimingModifier(),
+                "the missing property must preserve the previous kickback exactly");
         assertEquals(PlayerRecoilController.RECOVERY_SECONDS, profile.recoverySeconds(), 1.0E-12,
                 "an older definition keeps exactly the recovery duration it had before");
     }

@@ -28,10 +28,15 @@ public record WeaponDisplay(ResourceId id, ResourceId model, ResourceId texture,
     }
 
     /**
-     * @param contextName a serialized display-context name
+     * @param contextName a serialized display-context name, may be {@code null}
      * @return the declared transform, or {@link DisplayTransform#IDENTITY} when the context declares none
      */
     public DisplayTransform transform(String contextName) {
+        if (contextName == null) {
+            // An immutable map throws on a null key, and a caller asking about no context at all must get the safe default
+            // rather than an exception from inside a renderer.
+            return DisplayTransform.IDENTITY;
+        }
         return transforms.getOrDefault(contextName, DisplayTransform.IDENTITY);
     }
 

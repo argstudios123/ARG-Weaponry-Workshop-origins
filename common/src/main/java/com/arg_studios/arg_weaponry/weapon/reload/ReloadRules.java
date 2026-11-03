@@ -35,7 +35,41 @@ public final class ReloadRules {
      */
     public static final double DEFAULT_RELOAD_SECONDS = 1.0;
 
+    /**
+     * The cross-fade length used when a reload entry declares no {@code transition_duration}.
+     *
+     * <p>Reload stages are separate clips, so the pose at the end of one stage and the pose at the start of the next are
+     * generally not the same. Fading between them for this long reads as one continuous motion instead of a cut, and it
+     * is short enough that it never hides either clip: at twenty ticks per second it is three ticks. The value is a
+     * <em>render-side</em> blend only - it never changes a stage's duration, an insertion point or any server timing.</p>
+     */
+    public static final double DEFAULT_TRANSITION_SECONDS = 0.15;
+
+    /**
+     * The longest cross-fade a reload entry may ask for.
+     *
+     * <p>A larger {@code transition_duration} is clamped rather than rejected: a fade longer than this would still be
+     * inside the stage it introduces, but it would stop reading as a transition and start reading as its own animation.
+     * </p>
+     */
+    public static final double MAX_TRANSITION_SECONDS = 0.5;
+
     private ReloadRules() {
+    }
+
+    /**
+     * Resolves the cross-fade length of one reload entry into whole milliseconds, the form that crosses the wire.
+     *
+     * @param seconds the authored {@code transition_duration}, or {@code null} when the entry declares none
+     * @return the fade length in milliseconds, {@code 0} when blending is disabled; always within
+     *         {@code [0, MAX_TRANSITION_SECONDS]}
+     */
+    public static int transitionMillis(Double seconds) {
+        if (seconds == null || !Double.isFinite(seconds)) {
+            seconds = DEFAULT_TRANSITION_SECONDS;
+        }
+        double clamped = Math.max(0.0, Math.min(MAX_TRANSITION_SECONDS, seconds));
+        return (int) Math.round(clamped * 1000.0);
     }
 
     /**

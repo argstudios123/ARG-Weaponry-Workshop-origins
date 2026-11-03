@@ -217,7 +217,10 @@ final class ClientEquipController {
             WeaponActionSounds.holster(previous.definition(), previous.emptyMagazine());
         }
         if (current != null) {
-            boolean firstDraw = selection != null ? selection.firstDraw()
+            // [FirstDraw] The sound follows the entry that really played, so a first-draw sound can never be heard over an
+            // ordinary draw clip; a weapon that declares no first-draw clip keeps its sound-only first draw.
+            boolean firstDraw = selection != null
+                    ? com.arg_studios.arg_weaponry.client.animation.ClientHandoffVisuals.firstDrawSound(current, selection)
                     : FirstDrawFlag.shouldUseFirstDraw(stack, slot, HeldWeapon.itemIdOf(stack));
             WeaponActionSounds.draw(current, firstDraw, stack.getItem() instanceof WeaponItem weapon
                     && weapon.animationAmmoCount(stack) <= 0);

@@ -10,22 +10,30 @@ import java.util.Optional;
  * Chooses which declared {@code reload_sequences} entry applies to a reload.
  *
  * <p>The parser already stores every entry as a {@link WeaponDefinition.ReloadStep} (phase, animation,
- * duration, raw {@code when}, optional {@code repeat}) and deliberately keeps {@code when} unevaluated. This
- * selector supplies the missing evaluation for reloading, using the variable the shipped weapon actually
- * writes:</p>
+ * duration, raw {@code when}, optional {@code repeat}, optional {@code insert_at}) and deliberately keeps {@code when}
+ * unevaluated. This selector supplies the missing evaluation for reloading, using the variable the shipped weapon
+ * actually writes:</p>
  * <pre>
  *     reload_count &lt;op&gt; &lt;integer&gt;      op = == != &gt; &gt;= &lt; &lt;=
  * </pre>
  * <p>{@code reload_count} is the number of rounds in the magazine <em>when the reload starts</em>, which is
  * exactly what the M100 DMR means by it: {@code reload_count == 0} selects the empty-reload clip and
  * {@code reload_count > 0} the standard one. It is not the number of rounds inserted, and it is not
- * re-evaluated during the reload.</p>
+ * re-evaluated during the reload. {@link ReloadConditions} additionally accepts the {@code ammoCount} and
+ * {@code ammo_count} spellings of the same value, so a pack cannot lose an animation to a spelling mismatch; the value
+ * it is compared against is identical in every case.</p>
  *
  * <h2>Condition support (deliberately narrow)</h2>
- * <p>An absent or blank condition, or {@code *}, always applies. Anything outside the grammar above is
- * reported in {@link Selection#unsupportedConditions()} and can never match — it is not silently treated as
- * true or false. Multi-stage shotgun reloads (the commented-out {@code stage}/insert-count format) are not
- * interpreted by this milestone.</p>
+ * <p>An absent or blank condition, or {@code *}, always applies. The comparison grammar itself lives in
+ * {@link ReloadConditions}; anything outside it is reported in {@link Selection#unsupportedConditions()} and can never
+ * match — it is not silently treated as true or false.</p>
+ *
+ * <h2>Staged reloads</h2>
+ * <p>This class answers "which single clip represents this reload", which is all a definition written before the staged
+ * vocabulary needs. A definition that declares {@code stage} entries ({@code prepare}, {@code initial_load},
+ * {@code repeat_load}, {@code finish}, {@code chamber_load}) is planned by {@link ReloadTimeline} instead, which uses
+ * this selector only for the single-clip fallback. Keeping both means a pack is never forced to migrate and the legacy
+ * timing cannot change.</p>
  *
  * <h2>Fallback</h2>
  * <p>When a weapon declares sequences but none matches (typically because every condition is outside the
@@ -125,32 +133,8 @@ public final class ReloadSequenceSelector {
      *         outside the supported grammar
      */
     public static Boolean evaluate(String condition, int reloadCount) {
-        if (condition == null) {
-            return Boolean.TRUE;
-        }
-        String trimmed = condition.trim();
-        if (trimmed.isEmpty() || "*".equals(trimmed)) {
-            return Boolean.TRUE;
-        }
-
-        String[] parts = trimmed.split("\\s+");
-        if (parts.length != 3 || !RELOAD_COUNT_VARIABLE.equals(parts[0])) {
-            return null;
-        }
-        int value;
-        try {
-            value = Integer.parseInt(parts[2]);
-        } catch (NumberFormatException e) {
-            return null;
-        }
-        return switch (parts[1]) {
-            case "==" -> reloadCount == value;
-            case "!=" -> reloadCount != value;
-            case ">" -> reloadCount > value;
-            case ">=" -> reloadCount >= value;
-            case "<" -> reloadCount < value;
-            case "<=" -> reloadCount <= value;
-            default -> null;
-        };
+        // The grammar lives in ReloadConditions so the idle selector, this selector and the staged reload planner
+        // cannot drift apart. A legacy definition has one value, so every variable sees the magazine count.
+        return ReloadConditions.evaluateAgainst(condition, reloadCount);
     }
 }

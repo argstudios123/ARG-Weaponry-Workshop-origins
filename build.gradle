@@ -4,3 +4,119 @@ plugins {
     // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
     id 'net.neoforged.moddev' version '2.0.147' apply false
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Distribution tasks
+//
+// Three root-level commands build the three deliverables independently:
+//   ./gradlew buildFabricJar    -> the standalone Fabric jar
+//   ./gradlew buildNeoForgeJar  -> the standalone NeoForge jar
+//   ./gradlew buildUniversalJar -> one jar carrying both loader implementations
+//
+// They reuse the existing per-module `jar` tasks, so the archives are exactly the ones a normal build produces (correct
+// metadata, shared resources and content packs included). Nothing is repackaged by hand: the universal jar is a merge of
+// those two outputs. The copies land in build/distributions so the three files sit together.
+// ---------------------------------------------------------------------------------------------------------------------
+
+def fabricJar = providers.provider {
+    project(':fabric').tasks.named('jar', Jar).get().archiveFile.get().asFile
+}
+def neoForgeJar = providers.provider {
+    project(':neoforge').tasks.named('jar', Jar).get().archiveFile.get().asFile
+}
+
+/** Where the three distributions are collected. */
+def distributionsDir = layout.buildDirectory.dir('distributions')
+
+tasks.register('buildFabricJar', Copy) {
+    group = 'distribution'
+    description = 'Builds the standalone Fabric jar into build/distributions.'
+    dependsOn ':fabric:jar'
+    from(fabricJar)
+    into distributionsDir
+}
+
+tasks.register('buildNeoForgeJar', Copy) {
+    group = 'distribution'
+    description = 'Builds the standalone NeoForge jar into build/distributions.'
+    dependsOn ':neoforge:jar'
+    from(neoForgeJar)
+    into distributionsDir
+}
+
+/**
+ * Merges the two loaders' {@code META-INF/services} files.
+ *
+ * The standalone jars each register one provider per service interface. A merged jar would otherwise contain two files
+ * with the same path, so the providers are concatenated here and {@code Services} picks the one that belongs to the
+ * running loader (see its class documentation). Every other resource in the two jars is either unique or identical and is
+ * handled by the jar task's duplicate strategy.
+ */
+def universalServiceFiles = tasks.register('prepareUniversalServiceFiles') {
+    group = 'distribution'
+    description = 'Merges the loader service provider files for the universal jar.'
+    def fabricServices = project(':fabric').file('src/main/resources/META-INF/services')
+    def neoForgeServices = project(':neoforge').file('src/main/resources/META-INF/services')
+    def outputDir = layout.buildDirectory.dir('generated/universal-services')
+    inputs.dir(fabricServices)
+    inputs.dir(neoForgeServices)
+    outputs.dir(outputDir)
+    doLast {
+        def target = outputDir.get().asFile
+        target.deleteDir()
+        def names = (fabricServices.listFiles()*.name + neoForgeServices.listFiles()*.name)
+                .findAll { it != null }
+                .unique()
+                .sort()
+        names.each { name ->
+            def providers = []
+            [fabricServices, neoForgeServices].each { dir ->
+                def source = new File(dir, name)
+                if (source.isFile()) {
+                    providers.addAll(source.readLines().findAll { line -> !line.trim().isEmpty() && !line.trim().startsWith('#') })
+                }
+            }
+            def merged = new File(target, "META-INF/services/${name}")
+            merged.parentFile.mkdirs()
+            merged.text = providers.unique().join('\n') + '\n'
+        }
+    }
+}
+
+tasks.register('buildUniversalJar', Jar) {
+    group = 'distribution'
+    description = 'Builds one universal jar containing the Fabric and NeoForge implementations.'
+    dependsOn ':fabric:jar', ':neoforge:jar', universalServiceFiles
+    archiveBaseName = "${mod_id}-universal-${minecraft_version}"
+    archiveVersion = version
+    destinationDirectory = distributionsDir
+    // The common classes and resources are present in both inputs byte-for-byte; keep the first copy of each entry.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    // Declare the two archives as inputs so a rebuilt loader jar always rebuilds the universal archive too (the zip
+    // trees below are read through a closure, which Gradle cannot fingerprint by itself).
+    inputs.files(fabricJar).withPropertyName('fabricJar')
+    inputs.files(neoForgeJar).withPropertyName('neoforgeJar')
+
+    from({ zipTree(fabricJar.get()) }) {
+        exclude 'META-INF/MANIFEST.MF'
+        exclude 'META-INF/services/**'
+    }
+    from({ zipTree(neoForgeJar.get()) }) {
+        exclude 'META-INF/MANIFEST.MF'
+        exclude 'META-INF/services/**'
+    }
+    from(universalServiceFiles)
+
+    manifest {
+        attributes(
+                'Specification-Title'   : mod_name,
+                'Specification-Vendor'  : mod_author,
+                'Specification-Version' : archiveVersion,
+                'Implementation-Title'  : "${mod_name} (universal)",
+                'Implementation-Version': archiveVersion,
+                'Implementation-Vendor' : mod_author,
+                'Built-On-Minecraft'    : minecraft_version
+        )
+    }
+}

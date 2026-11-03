@@ -4,7 +4,6 @@ import com.arg_studios.arg_weaponry.Constants;
 import com.arg_studios.arg_weaponry.platform.Services;
 import com.arg_studios.arg_weaponry.weapon.fire.WeaponFireService;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionHand;
 
 /**
  * The play-phase glue for weapon firing: one serverbound request, one clientbound acceptance.

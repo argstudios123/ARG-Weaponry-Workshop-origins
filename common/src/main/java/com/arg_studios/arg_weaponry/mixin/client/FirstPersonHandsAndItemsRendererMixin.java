@@ -4,8 +4,6 @@ import com.arg_studios.arg_weaponry.client.animation.FirstPersonVisualWeapons;
 import com.arg_studios.arg_weaponry.client.render.WeaponRenderer;
 import com.arg_studios.arg_weaponry.item.WeaponItem;
 import com.mojang.blaze3d.vertex.PoseStack;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.FirstPersonHandsAndItemsRenderer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.state.level.FirstPersonHandsAndItemsRenderState;
@@ -68,12 +66,11 @@ public abstract class FirstPersonHandsAndItemsRendererMixin {
         if (renderState.isScoping) {
             return;
         }
-        // The decision is made from the live hand, not from the stack this method was called with. Vanilla's first-person
-        // pass keeps displaying the previous item for a few ticks after a slot change (its re-equip animation only swaps
-        // the displayed stack once the hand height drops below 0.1), so the parameter lags behind the held item exactly
-        // while this mod plays its own draw animation. Reading it here would draw vanilla's stale hand *and* release the
-        // controller the equip subsystem had just bound, restarting the idle clip every frame and destroying the draw.
-        ItemStack visual = heldStack(hand, itemStack);
+        // The decision is made from the hand's live stack (or the visual weapon during a handoff), never from the parameter:
+        // vanilla's first-person render state keeps displaying the previous item for the few ticks its equip-lowering
+        // animation runs, so the parameter lags behind the held item exactly while this mod plays its own transition. The
+        // weapon pass has already rewritten the render state to the same stack, so both hooks agree on what this frame draws.
+        ItemStack visual = FirstPersonVisualWeapons.renderStack(hand);
         if (!(visual.getItem() instanceof WeaponItem weaponItem)) {
             // The hand no longer holds a weapon: ownership of its visual weapon ends here, so it can never resume
             // animating the weapon it used to hold.
@@ -86,18 +83,5 @@ public abstract class FirstPersonHandsAndItemsRendererMixin {
         if (WeaponRenderer.isFirstPersonRenderable(weaponItem)) {
             callbackInfo.cancel();
         }
-    }
-
-    /**
-     * @param hand      the hand being submitted
-     * @param displayed the stack vanilla is about to draw
-     * @return the stack the player actually holds in that hand, or the displayed one while no player exists
-     */
-    private static ItemStack heldStack(InteractionHand hand, ItemStack displayed) {
-        if (Minecraft.getInstance().player == null) {
-            return displayed;
-        }
-        ItemStack visual = FirstPersonVisualWeapons.stackFor(hand);
-        return visual.isEmpty() && displayed != null && !displayed.isEmpty() ? displayed : visual;
     }
 }

@@ -4,7 +4,7 @@ package com.arg_studios.arg_weaponry.weapon.aiming;
  * The zoom convention and its validation.
  *
  * <h2>Convention</h2>
- * <p>{@code aiming.aimimg_zoom} is a <strong>field-of-view multiplier</strong> at full aim-down-sights:</p>
+ * <p>{@code aiming.aiming_zoom} is a <strong>field-of-view multiplier</strong> at full aim-down-sights:</p>
  * <ul>
  *   <li>{@code 1.0} - the weapon does not change the base field of view,</li>
  *   <li>{@code 0.5} - full ADS uses half of the ordinary field of view,</li>

@@ -116,6 +116,9 @@ final class ServerEquipAuthority {
      */
     private void tickPlayer(ServerPlayer player) {
         UUID id = player.getUUID();
+        // The offhand policy runs before anything else reads the held items, so a weapon that arrived through a command, a
+        // container click or another mod never survives a tick in that hand.
+        OffhandRestriction.enforce(player);
         ItemStack stack = player.getMainHandItem();
         int slot = player.getInventory().getSelectedSlot();
         String itemId = HeldWeapon.itemIdOf(stack);

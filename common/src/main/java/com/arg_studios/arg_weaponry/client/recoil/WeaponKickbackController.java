@@ -134,10 +134,25 @@ public final class WeaponKickbackController {
      * @param profile the weapon's profile, may be {@code null}
      */
     public void shot(RecoilProfile profile) {
+        shot(profile, false);
+    }
+
+    /**
+     * Applies one accepted shot to the weapon-model layer for the player's stance.
+     *
+     * <p>This overload is the only caller that can apply {@code kickback_aiming_modifier}. It asks the profile for the
+     * already-scaled displacement through {@link RecoilProfile#kickbackBlocks(boolean)}, so the modifier cannot be applied
+     * a second time anywhere below this point. The rest of the impulse curve, its recovery and its overlap behaviour are
+     * identical for hip fire and ADS.</p>
+     *
+     * @param profile the weapon's profile, may be {@code null}
+     * @param aiming  whether the player was aiming when the shot was accepted
+     */
+    public void shot(RecoilProfile profile, boolean aiming) {
         if (profile == null || !profile.hasKickback()) {
             return;
         }
-        double shotAmplitude = profile.kickbackBlocks();
+        double shotAmplitude = profile.kickbackBlocks(aiming);
         if (!(shotAmplitude > 0.0) || !Double.isFinite(shotAmplitude)) {
             return;
         }

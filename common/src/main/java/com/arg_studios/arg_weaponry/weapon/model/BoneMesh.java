@@ -7,8 +7,10 @@ import java.util.Arrays;
  *
  * <p>Vertex positions are kept in <em>model space</em>, exactly as authored: Bedrock geometry stores
  * cube origins and polymesh positions in model space, and a bone rotates its geometry around its
- * pivot. Keeping the data in model space means a future pose can move a bone without touching or
- * re-baking the mesh.</p>
+ * pivot. A cube's own {@code rotation} is the one bake that happens at parse time - it is applied
+ * around the cube's pivot, in the render space and the composition order
+ * {@link RotationConvention} and {@link BedrockRotation} define - so the vertices stay a plain
+ * model-space triangle list that any pose can move without touching or re-baking the mesh.</p>
  *
  * <p>Every corner stores its own position, normal and UV, so independently indexed Bedrock data is
  * resolved once at parse time and the renderer can simply walk triangles. Quads are split into two

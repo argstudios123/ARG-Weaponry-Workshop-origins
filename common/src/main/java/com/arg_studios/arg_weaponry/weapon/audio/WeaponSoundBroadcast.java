@@ -1,7 +1,6 @@
 package com.arg_studios.arg_weaponry.weapon.audio;
 
 import com.arg_studios.arg_weaponry.Constants;
-import com.arg_studios.arg_weaponry.weapon.ResourceId;
 import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
@@ -40,19 +39,25 @@ public final class WeaponSoundBroadcast {
             return false;
         }
         WeaponSoundKey key = WeaponSounds.firingKey(definition.sounds(), false);
-        ResourceId configured = WeaponSounds.sound(definition.sounds(), key);
-        if (configured == null) {
+        WeaponSoundSet set = definition.soundSet(key);
+        if (set == null) {
             // Documented: no firing entry means the weapon is silent for everyone, never a substitute.
             return false;
         }
-        Identifier location = Identifier.tryParse(configured.asString());
+        // One variant per shot, chosen from the same shuffle bag and with the same arithmetic the shooter's own client
+        // uses, so every other player hears the identical take at the identical pitch and volume. The jitter is applied
+        // here, on the authoritative side, rather than per listener: two players standing next to each other must hear the
+        // same shot, not two different recordings of it.
+        int index = set.size() == 1 ? 0 : shooter.getRandom().nextInt(set.size());
+        Identifier location = Identifier.tryParse(set.variant(index).asString());
         if (location == null) {
             Constants.LOG.debug("[ARG] Weapon '{}' declares an invalid firing sound '{}'; nothing is broadcast",
-                    definition.name(), configured);
+                    definition.name(), set.variant(index));
             return false;
         }
         shooter.level().playSound(shooter, shooter.getX(), shooter.getEyeY(), shooter.getZ(),
-                SoundEvent.createVariableRangeEvent(location), SoundSource.PLAYERS, 1.0F, 1.0F);
+                SoundEvent.createVariableRangeEvent(location), SoundSource.PLAYERS,
+                set.volumeAt(shooter.getRandom().nextFloat()), set.pitchAt(shooter.getRandom().nextFloat()));
         return true;
     }
 }

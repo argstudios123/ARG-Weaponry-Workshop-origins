@@ -1,5 +1,6 @@
 package com.arg_studios.arg_weaponry.client.render;
 
+import com.arg_studios.arg_weaponry.weapon.model.BedrockRotation;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBone;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBoneNames;
 import com.arg_studios.arg_weaponry.weapon.model.RotationConvention;
@@ -59,7 +60,7 @@ import java.util.Set;
  * mirror the geometry without mirroring the anchor, so the anchor would no longer sit at the camera and
  * the weapon would stay on the wrong side. Mirroring reverses triangle winding, so
  * {@link WeaponRenderer} compensates for it when it writes vertices; see
- * {@code WeaponRenderer#writeQuads}.</p>
+ * {@code MeshVertexWriter}.</p>
  *
  * <p>For cross-checking with the authoring tool: the shipped M100 DMR stores its anchor at Bedrock X
  * {@code 4.0}, which is Blockbench X {@code -4.0} - the same bone, two conventions. The renderer works
@@ -246,49 +247,17 @@ public final class ViewBoneTransform {
     /**
      * Moves one point through a bone's authored transform without a pose stack.
      *
-     * <p>Used only to resolve the anchor pivot analytically. The rotation order matches the authored
-     * order used by {@code AnimatedBoneTransform}: a bone's pose is {@code Rz * Ry * Rx}, so a vector is
-     * rotated about X first, then Y, then Z.</p>
+     * <p>Used only to resolve the anchor pivot analytically. The rotation is the shared
+     * {@link BedrockRotation#rotateAround(Vec3, Vec3, Vec3)} composition ({@code Rz * Ry * Rx}), applied to the triple
+     * already converted by {@link RotationConvention#toRenderSpace(Vec3)} - the very same two steps the geometry takes,
+     * so an anchor cannot end up in a different frame from the model it anchors.</p>
      *
      * @param bone  the bone whose transform is applied
      * @param point the point in the bone's parent space
      * @return the point after the pivot translation, the rotation and the inverse pivot translation
      */
     private static Vec3 transformedPoint(ModelBone bone, Vec3 point) {
-        Vec3 pivot = bone.pivot();
-        double x = point.x() - pivot.x();
-        double y = point.y() - pivot.y();
-        double z = point.z() - pivot.z();
-
-        Vec3 rotation = RotationConvention.toRenderSpace(bone.rotation());
-        if (rotation.x() != 0.0F) {
-            double radians = Math.toRadians(rotation.x());
-            double cos = Math.cos(radians);
-            double sin = Math.sin(radians);
-            double rotatedY = y * cos - z * sin;
-            double rotatedZ = y * sin + z * cos;
-            y = rotatedY;
-            z = rotatedZ;
-        }
-        if (rotation.y() != 0.0F) {
-            double radians = Math.toRadians(rotation.y());
-            double cos = Math.cos(radians);
-            double sin = Math.sin(radians);
-            double rotatedX = x * cos + z * sin;
-            double rotatedZ = -x * sin + z * cos;
-            x = rotatedX;
-            z = rotatedZ;
-        }
-        if (rotation.z() != 0.0F) {
-            double radians = Math.toRadians(rotation.z());
-            double cos = Math.cos(radians);
-            double sin = Math.sin(radians);
-            double rotatedX = x * cos - y * sin;
-            double rotatedY = x * sin + y * cos;
-            x = rotatedX;
-            y = rotatedY;
-        }
-
-        return new Vec3((float) (x + pivot.x()), (float) (y + pivot.y()), (float) (z + pivot.z()));
+        return BedrockRotation.rotateAround(point, bone.pivot(),
+                RotationConvention.toRenderSpace(bone.rotation()));
     }
 }

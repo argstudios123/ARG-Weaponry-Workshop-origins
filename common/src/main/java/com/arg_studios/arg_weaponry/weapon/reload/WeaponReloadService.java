@@ -13,6 +13,7 @@ import com.arg_studios.arg_weaponry.weapon.fire.WeaponFireSessions;
 import com.arg_studios.arg_weaponry.weapon.inspect.WeaponInspectService;
 import com.arg_studios.arg_weaponry.weapon.action.WeaponActionResult;
 import com.arg_studios.arg_weaponry.weapon.ammo.AmmunitionRegistry;
+import com.arg_studios.arg_weaponry.weapon.ammo.CreativeAmmunition;
 import com.arg_studios.arg_weaponry.weapon.ammo.ReserveAmmunition;
 import com.arg_studios.arg_weaponry.weapon.state.WeaponComponents;
 import com.arg_studios.arg_weaponry.weapon.state.WeaponState;
@@ -29,9 +30,12 @@ import java.util.List;
  * The server-authoritative reload operation.
  *
  * <p>A reload is a <em>session</em>: {@link #request} validates and starts it, the server tick pass
- * ({@link #serverTick}) keeps it alive or cancels it, and the transfer happens when the authored duration has
- * elapsed. Nothing is consumed and the magazine is untouched while the session runs, so an interrupted reload
- * can never leave a half-filled magazine or lost ammunition behind.</p>
+ * ({@link #serverTick}) keeps it alive or cancels it, and the ammunition is inserted as the authored stages reach their
+ * insertion points. A single-clip definition (every pack written before staged reloading) inserts its whole transfer
+ * when its clip ends, which is exactly the behaviour it always had; a staged definition - a shotgun loaded shell by
+ * shell - inserts {@code shell_amount_reload} rounds per {@code initial_load}/{@code repeat_load} cycle. Every insertion
+ * is a validated, all-or-nothing inventory transfer, so an interrupted reload can never lose ammunition or leave a
+ * stack half-consumed.</p>
  *
  * <h2>What the client may and may not say</h2>
  * <p>The request carries a hand and a sequence number. Capacity, room, reserve amounts, the animation name,
@@ -60,9 +64,14 @@ public final class WeaponReloadService {
      * @param animation     the declared reload animation the client should play, or {@code null}
      * @param durationTicks the server-side duration in ticks, {@code 0} for a rejection
      * @param emptyMagazine whether the magazine was empty at reload start, which selects the empty sound
+     * @param stages        the staged clips of an accepted reload, in play order; empty otherwise
      */
     public record ReloadOutcome(WeaponActionResult result, String animation, int durationTicks,
-                                boolean emptyMagazine) {
+                                boolean emptyMagazine, List<ReloadClip> stages) {
+
+        public ReloadOutcome {
+            stages = stages == null ? List.of() : List.copyOf(stages);
+        }
 
         /** @return whether this outcome started a session. */
         public boolean started() {
@@ -103,7 +112,13 @@ public final class WeaponReloadService {
             return reject(player, hand, sequence, WeaponActionRules.validateReload(capacity, state, 0));
         }
         int reserve = ReserveAmmunition.available(player, definition);
-        WeaponActionResult decision = WeaponActionRules.validateReload(capacity, state, reserve);
+        // Creative supply: a weapon that declares the creative fallback can always be reloaded in Creative, and the
+        // dedicated rounds are still preferred (see CreativeAmmunition).
+        int magazineRounds = capacity == null ? 0 : capacity.rounds();
+        boolean creativeSupply = CreativeAmmunition.grantsUnlimited(player.hasInfiniteMaterials(),
+                AmmunitionRegistry.declaresCreativeFallback(definition));
+        int validationReserve = CreativeAmmunition.reserveFor(reserve, magazineRounds, creativeSupply);
+        WeaponActionResult decision = WeaponActionRules.validateReload(capacity, state, validationReserve);
         if (!decision.isAllowed()) {
             return reject(player, hand, sequence, decision);
         }
@@ -119,18 +134,23 @@ public final class WeaponReloadService {
                     + "sequence", definition.name());
         }
 
+        // The plan decides the stages, their timing and where each round is inserted. It is built here, on the server,
+        // from values this side owns, and the client is only told what to play.
+        ReloadTimeline timeline = ReloadTimeline.plan(definition.reloadSequences(), state.ammo(), magazineRounds,
+                validationReserve, definition.shellAmountReload());
+
         // A reload and a firing session are mutually exclusive: the reload owns the weapon from here on, so any
         // automatic or burst session of this hand ends now, before a single tick of the reload elapses.
         WeaponFireSessions.cancel(player.getUUID(), hand);
         // An inspection is mutually exclusive with a reload for the same reason: one playback owner at a time.
         WeaponInspectService.cancel(player.getUUID(), hand, WeaponActionResult.RELOAD_IN_PROGRESS);
 
-        int durationTicks = ReloadRules.ticksFor(ReloadSequenceSelector.durationSeconds(selection));
+        int durationTicks = timeline.totalTicks();
         long now = player.level().getGameTime();
         boolean emptyMagazine = state.ammo() == 0;
         ReloadSession session = new ReloadSession(player.getUUID(), hand, slotOf(player, hand), itemIdOf(stack),
-                sequence, now, now + durationTicks, ReloadSequenceSelector.animationName(selection), durationTicks,
-                state.ammo(), emptyMagazine, emptyMagazine ? SOUND_EMPTY : SOUND_STANDARD);
+                sequence, now, now + durationTicks, openingAnimation(timeline), durationTicks,
+                state.ammo(), emptyMagazine, emptyMagazine ? SOUND_EMPTY : SOUND_STANDARD, timeline);
 
         WeaponReloadRuntime.StartResult start = WeaponReloadRuntime.start(session);
         if (start == WeaponReloadRuntime.StartResult.ALREADY_RELOADING) {
@@ -171,6 +191,11 @@ public final class WeaponReloadService {
                 cancel(player, session, invalid);
                 continue;
             }
+            // Insertion first, completion second: the last insertion point of a plan is the end of its last stage, which
+            // is the same tick the reload completes on, and a shell must never be lost to that ordering.
+            if (!applyDueInsertions(player, session)) {
+                continue;
+            }
             if (session.isComplete(player.level().getGameTime())) {
                 complete(player, session);
             }
@@ -178,7 +203,100 @@ public final class WeaponReloadService {
     }
 
     /**
-     * Performs the transfer and ends the session, or cancels it when its preconditions no longer hold.
+     * Inserts every round the plan says is due at the current tick.
+     *
+     * <p>Idempotent by construction: the amount still owed is derived from the weapon's own ammunition count versus the
+     * count the session started with, so a repeated tick inserts nothing and a skipped tick inserts everything that is
+     * due. The transfer itself is the same validated, all-or-nothing inventory plan the single-transfer reload always
+     * used - only the amount is now a property of the stage.</p>
+     *
+     * @param player  the player the session belongs to
+     * @param session the running session
+     * @return {@code true} when the session may continue, {@code false} when it was cancelled here
+     */
+    private static boolean applyDueInsertions(ServerPlayer player, ReloadSession session) {
+        ItemStack stack = player.getItemInHand(session.hand());
+        if (!(stack.getItem() instanceof WeaponItem weapon)) {
+            cancel(player, session, WeaponActionResult.NOT_A_WEAPON);
+            return false;
+        }
+        WeaponDefinition definition = weapon.definition();
+        WeaponState state = weapon.state(stack);
+        AmmoCapacity capacity = weapon.ammoCapacity();
+        if (state == null || capacity == null || capacity.isUnlimited()) {
+            cancel(player, session, WeaponActionResult.RELOAD_NOT_APPLICABLE);
+            return false;
+        }
+
+        long elapsed = player.level().getGameTime() - session.startTick();
+        if (elapsed < 0) {
+            return true;
+        }
+        int wholeTicks = elapsed >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) elapsed;
+        int alreadyInserted = Math.max(0, state.ammo() - session.startingAmmo());
+        int due = session.timeline().dueAmount(wholeTicks, alreadyInserted);
+        if (due <= 0) {
+            return true;
+        }
+        return transfer(player, session, definition, weapon, stack, state, capacity, due);
+    }
+
+    /**
+     * Moves up to {@code wanted} rounds from the inventory into the magazine.
+     *
+     * <p>Nothing is invented: the amount is clamped to the reserve that exists, only that part is deducted, and the
+     * Creative fallback costs nothing - exactly the arithmetic of the single-transfer reload, applied once per stage
+     * instead of once per reload.</p>
+     *
+     * @param wanted the rounds this stage asks for
+     * @return {@code true} when the session may continue
+     */
+    private static boolean transfer(ServerPlayer player, ReloadSession session, WeaponDefinition definition,
+                                    WeaponItem weapon, ItemStack stack, WeaponState state, AmmoCapacity capacity,
+                                    int wanted) {
+        List<ResourceId> compatible = AmmunitionRegistry.compatibleItemIds(definition);
+        Inventory inventory = player.getInventory();
+        List<ReserveAmmunition.Slot> slots = ReserveAmmunition.slotsOf(inventory);
+
+        int reserve = ReserveAmmunition.count(compatible, slots);
+        int rounds = capacity.rounds();
+        boolean creativeSupply = CreativeAmmunition.grantsUnlimited(player.hasInfiniteMaterials(),
+                AmmunitionRegistry.declaresCreativeFallback(definition));
+        int available = CreativeAmmunition.reserveFor(reserve, rounds, creativeSupply);
+        int amount = Math.min(wanted, available);
+        if (amount <= 0) {
+            cancel(player, session, ReloadRules.room(rounds, state.ammo()) == 0
+                    ? WeaponActionResult.MAGAZINE_FULL : WeaponActionResult.NO_RESERVE_AMMUNITION);
+            return false;
+        }
+
+        // Only the rounds the real inventory can cover are taken from it; the rest is the Creative fallback and costs
+        // nothing. With no Creative supply this is exactly the old behaviour: every round is deducted.
+        int carried = CreativeAmmunition.consumable(amount, reserve);
+        ReloadAmmunitionPlan plan = carried <= 0 ? ReloadAmmunitionPlan.empty()
+                : ReloadAmmunitionPlan.plan(compatible,
+                ReloadAmmunitionPlan.candidates(slots), carried);
+        if ((carried > 0 && !plan.covers(carried)) || !commit(inventory, plan)) {
+            // The inventory changed between counting and committing; this stage moved nothing.
+            cancel(player, session, WeaponActionResult.NO_RESERVE_AMMUNITION);
+            return false;
+        }
+
+        // One write, after the transfer succeeded: the magazine now holds what the plan actually moved.
+        stack.set(WeaponComponents.WEAPON_STATE, weapon.stateWithAmmo(stack, state.ammo() + amount));
+        inventory.setChanged();
+        Constants.LOG.debug("[ARG] Inserted {} round(s) of '{}' in {}; the magazine now holds {}", amount,
+                definition.name(), session.hand(), state.ammo() + amount);
+        return true;
+    }
+
+    /**
+     * Ends a session whose timeline has finished, or cancels it when nothing could be inserted at all.
+     *
+     * <p>A reload that inserted nothing reports exactly the answer the single-transfer reload reported in that
+     * situation: {@link WeaponActionResult#MAGAZINE_FULL} when there is no room and
+     * {@link WeaponActionResult#NO_RESERVE_AMMUNITION} when the inventory cannot pay. Rounds are never removed here -
+     * they were already moved by the stages that ran.</p>
      *
      * @param player  the player the session belongs to
      * @param session the session that reached its end
@@ -192,40 +310,32 @@ public final class WeaponReloadService {
         WeaponDefinition definition = weapon.definition();
         WeaponState state = weapon.state(stack);
         AmmoCapacity capacity = weapon.ammoCapacity();
-        if (capacity == null || capacity.isUnlimited()) {
+        if (state == null || capacity == null || capacity.isUnlimited()) {
             // A definition change while a session was running: nothing is transferable any more.
             cancel(player, session, WeaponActionResult.RELOAD_NOT_APPLICABLE);
             return;
         }
-        List<ResourceId> compatible = AmmunitionRegistry.compatibleItemIds(definition);
-        Inventory inventory = player.getInventory();
-        List<ReserveAmmunition.Slot> slots = ReserveAmmunition.slotsOf(inventory);
 
-        int reserve = ReserveAmmunition.count(compatible, slots);
-        int rounds = capacity.rounds();
-        int amount = ReloadRules.transfer(rounds, state.ammo(), reserve);
-        if (amount <= 0) {
-            cancel(player, session, ReloadRules.room(rounds, state.ammo()) == 0
+        int inserted = state.ammo() - session.startingAmmo();
+        if (inserted <= 0) {
+            cancel(player, session, ReloadRules.room(capacity.rounds(), state.ammo()) == 0
                     ? WeaponActionResult.MAGAZINE_FULL : WeaponActionResult.NO_RESERVE_AMMUNITION);
             return;
         }
 
-        ReloadAmmunitionPlan plan = ReloadAmmunitionPlan.plan(compatible,
-                ReloadAmmunitionPlan.candidates(slots), amount);
-        if (!plan.covers(amount) || !commit(inventory, plan)) {
-            // The inventory changed between counting and committing; nothing has been moved.
-            cancel(player, session, WeaponActionResult.NO_RESERVE_AMMUNITION);
-            return;
-        }
-
-        // One write, after the transfer succeeded: the magazine now holds what the plan actually moved.
-        stack.set(WeaponComponents.WEAPON_STATE, weapon.stateWithAmmo(stack, state.ammo() + amount));
-        inventory.setChanged();
         WeaponReloadRuntime.remove(session.playerId(), session.hand());
-
-        Constants.LOG.debug("[ARG] {} completed a reload of '{}' in {}: {} round(s) loaded, {} left in the magazine",
-                player.getName().getString(), definition.name(), session.hand(), amount, state.ammo() + amount);
+        Constants.LOG.debug("[ARG] {} completed a reload of '{}' in {}: {} round(s) inserted, {} left in the magazine",
+                player.getName().getString(), definition.name(), session.hand(), inserted, state.ammo());
         send(player, session, WeaponActionResult.RELOAD_COMPLETED);
+    }
+
+    /**
+     * @param timeline the plan of the session that is about to start
+     * @return the clip the reload opens with, or {@code null} when the plan declares none
+     */
+    private static String openingAnimation(ReloadTimeline timeline) {
+        List<ReloadTimeline.Stage> animated = timeline.animatedStages();
+        return animated.isEmpty() ? null : animated.getFirst().animation();
     }
 
     /**
@@ -315,7 +425,7 @@ public final class WeaponReloadService {
 
     private static ReloadOutcome reject(ServerPlayer player, InteractionHand hand, int sequence,
                                         WeaponActionResult result) {
-        ReloadOutcome outcome = new ReloadOutcome(result, null, 0, false);
+        ReloadOutcome outcome = new ReloadOutcome(result, null, 0, false, List.of());
         if (player != null && hand != null && sequence >= 1) {
             send(player, hand, sequence, outcome);
         }
@@ -324,9 +434,18 @@ public final class WeaponReloadService {
 
     private static ReloadOutcome send(ServerPlayer player, ReloadSession session, WeaponActionResult result) {
         ReloadOutcome outcome = new ReloadOutcome(result, session.animation(), session.durationTicks(),
-                session.emptyMagazine());
+                session.emptyMagazine(), stagesOf(session, result));
         send(player, session.hand(), session.sequence(), outcome);
         return outcome;
+    }
+
+    /**
+     * @param session the session the outcome belongs to
+     * @param result  what happened
+     * @return the staged clips the client has to play, empty for anything but a start
+     */
+    private static List<ReloadClip> stagesOf(ReloadSession session, WeaponActionResult result) {
+        return result == WeaponActionResult.RELOAD_STARTED ? session.timeline().animatedClips() : List.of();
     }
 
     private static void send(ServerPlayer player, InteractionHand hand, int sequence, ReloadOutcome outcome) {
@@ -336,7 +455,7 @@ public final class WeaponReloadService {
         }
         Services.NETWORK.sendToPlayer(player, new WeaponReloadResultPayload(hand, sequence, outcome.result(),
                 outcome.animation() == null ? "" : outcome.animation(), outcome.durationTicks(),
-                outcome.emptyMagazine()));
+                outcome.emptyMagazine(), outcome.stages()));
     }
 
     /**

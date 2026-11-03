@@ -164,7 +164,11 @@ public final class PlayerArmRig {
         // because these model parts belong to this class alone (PlayerArmModels).
         resetToPlacedPose(arm);
         sleeve.visible = showSleeve;
-        ArmPlacement.Box nativeBox = measuredBox(arm);
+        // Measured with the sleeve hidden: the sleeve is inflated by a quarter of a pixel on every side, so including it would
+        // report an arm that is 4.5 x 12.5 x 4.5 pixels instead of the authored 4 x 12 x 4 - the exact box the arm rig bone
+        // declares. The centre would not move, but a box that does not describe the arm is the kind of error that turns into a
+        // visible offset the day a pack authors an asymmetric rig.
+        ArmPlacement.Box nativeBox = measuredArmBox(arm, sleeve);
         ArmPlacement.Placement placement = ArmPlacement.solve(reference, nativeBox);
         if (placement == null) {
             reportMissing("the native arm geometry could not be measured");
@@ -178,7 +182,10 @@ public final class PlayerArmRig {
             // Submitted directly instead of through AvatarRenderer#renderRightHand, so vanilla's own hand posing (the
             // +-0.1 radian lean and the forced sleeve flags) never reaches this model part. The render type, the light
             // and the overlay match what renderHand uses, so the arm looks exactly like the vanilla first-person arm.
-            collector.submitModelPart(arm, poseStack, RenderTypes.entityTranslucent(rig.skin().body().texturePath()),
+            // Cutout, the same family the weapon uses. A translucent pass is drawn after the cutout weapon without writing
+            // depth, so an arm that is behind the receiver was still drawn on top of it - the reported "the arm lies across
+            // the gun". Skin textures are opaque, so nothing is lost by cutting them out instead.
+            collector.submitModelPart(arm, poseStack, RenderTypes.entityCutout(rig.skin().body().texturePath()),
                     lightCoords, OverlayTexture.NO_OVERLAY, null);
         } finally {
             poseStack.popPose();
@@ -211,6 +218,22 @@ public final class PlayerArmRig {
      * divides by 16 and {@code translateAndRotate} translates by {@code x / 16}. That is why the result is in blocks
      * and why {@link ArmPlacement} has to convert it. The sleeve child is included by that API, but it is inflated
      * symmetrically, so it cannot move the centre the placement uses.</p>
+     *
+     * @param arm the arm part
+     * @return the box, or {@code null} when the part reports no geometry
+     */
+    private static ArmPlacement.Box measuredArmBox(ModelPart arm, ModelPart sleeve) {
+        boolean wasVisible = sleeve.visible;
+        sleeve.visible = false;
+        try {
+            return measuredBox(arm);
+        } finally {
+            sleeve.visible = wasVisible;
+        }
+    }
+
+    /**
+     * Measures an arm part, including whatever children are visible.
      *
      * @param arm the arm part
      * @return the box, or {@code null} when the part reports no geometry

@@ -3,18 +3,26 @@
   "minVersion": "0.8",
   "package": "com.arg_studios.arg_weaponry.mixin",
   "compatibilityLevel": "JAVA_25",
-  "mixins": [],
+  "mixins": [
+    "OffhandSlotMixin",
+    "OffhandSwapPacketMixin"
+  ],
   "client": [
     "client.CameraMixin",
     "client.CameraFovMixin",
+    "client.EntitySprintAimMixin",
     "client.FirstPersonHandsAndItemsRendererMixin",
     "client.GameRendererFirstPersonMixin",
+    "client.GameRendererFirstPersonProjectionMixin",
+    "client.HudCrosshairMixin",
+    "client.LocalPlayerSprintAimMixin",
     "client.MinecraftAttackMixin",
     "client.ModelManagerMixin",
     "client.PackRepositoryMixin",
     "client.MinecraftUseItemMixin",
     "client.EquipScrollMixin",
-    "client.EquipHotbarKeyMixin"
+    "client.EquipHotbarKeyMixin",
+    "client.OffhandSwapMixin"
   ],
   "server": [],
   "injectors": {

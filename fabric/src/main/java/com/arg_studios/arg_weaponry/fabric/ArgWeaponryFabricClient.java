@@ -21,20 +21,13 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
-import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
-import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
+import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManager;
 
-/**
- * Fabric client entry point.
- *
- * <p>Registers the client resource-reload hook that invalidates the weapon render and animation caches, and -
- * only when the development animation tester is enabled - the development-only key binding that opens it. The
- * rendering itself is loader-independent and lives in the common module.</p>
- */
+
 
 public final class ArgWeaponryFabricClient implements ClientModInitializer {
 
@@ -42,19 +35,17 @@ public final class ArgWeaponryFabricClient implements ClientModInitializer {
     public static final Identifier RELOAD_LISTENER_ID =
             Identifier.fromNamespaceAndPath(Constants.MOD_ID, "weapon_render_caches");
 
-    /**
-     * Development-only key that opens the animation tester; registered only when the tester is enabled.
-     *
-     * <p>The shortcut is <strong>Ctrl + Alt + J</strong>: this mapping supplies the J and
-     * {@link AnimationTester#openScreenFromShortcut()} requires Ctrl and Alt to be held. Both loaders build the
-     * binding from {@link AnimationTester#SHORTCUT_KEY}, so the key cannot drift between them.</p>
-     */
+
     private static final KeyMapping ANIMATION_TESTER_KEY = new KeyMapping("key.arg_weaponry.animation_tester",
             AnimationTester.SHORTCUT_KEY, WeaponKeyCategory.CATEGORY);
 
     @Override
     public void onInitializeClient() {
-        ResourceManagerHelper.get(PackType.CLIENT_RESOURCES).registerReloadListener(new WeaponCacheReloadListener());
+        // Fabric API 0.160+ moved reload listeners to the versioned ResourceLoader: its
+        // ResourceManagerHelper/PackType API is deprecated. The listener id is the same one other mods can
+        // order against, and the callback still runs on the client resource-reload thread.
+        ResourceLoader.get(PackType.CLIENT_RESOURCES)
+                .registerReloadListener(RELOAD_LISTENER_ID, new WeaponCacheReloadListener());
 
         // Client half of the weapon handshake and firing: the receiver that answers the server's manifest, the
         // receiver that animates accepted shots, and the reset of the client-side firing state between worlds.
@@ -122,13 +113,14 @@ public final class ArgWeaponryFabricClient implements ClientModInitializer {
      *
      * <p>Content packs are read from their own directory rather than through the vanilla resource
      * manager, so this listener is the single point at which edited pack files are picked up.</p>
+     *
+     * <p>It implements vanilla's {@link ResourceManagerReloadListener} rather than the retired Fabric
+     * {@code SimpleSynchronousResourceReloadListener}: the identifier now comes from
+     * {@link ResourceLoader#registerReloadListener(Identifier, net.minecraft.server.packs.resources.PreparableReloadListener)},
+     * which is the supported API in Fabric API 0.160+.</p>
      */
-    private static final class WeaponCacheReloadListener implements SimpleSynchronousResourceReloadListener {
-
-        @Override
-        public Identifier getFabricId() {
-            return RELOAD_LISTENER_ID;
-        }
+    private static final class WeaponCacheReloadListener
+            implements net.minecraft.server.packs.resources.ResourceManagerReloadListener {
 
         @Override
         public void onResourceManagerReload(ResourceManager resourceManager) {

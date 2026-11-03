@@ -44,7 +44,7 @@ public final class WeaponTextureCache {
     private static final WeaponTextureCache INSTANCE = new WeaponTextureCache();
 
     /** Entry stored for a resource that was looked up and does not exist; dropped by {@link #clear()}. */
-    private static final Entry ABSENT = new Entry(null, null);
+    private static final Entry ABSENT = new Entry(null, null, 0, 0);
 
     private final Map<String, Entry> entries = new HashMap<>();
 
@@ -64,6 +64,35 @@ public final class WeaponTextureCache {
      * @return the registered texture identifier, or {@code null} when it is missing or unusable
      */
     public synchronized Identifier get(ContentPack pack, ResourceId id) {
+        Entry entry = entry(pack, id);
+        return entry == null ? null : entry.textureId;
+    }
+
+    /**
+     * Returns the registered texture together with the size of the image it was uploaded from.
+     *
+     * <p>The size is what makes an animated sprite sheet usable: the frame count is derived from the pixel dimensions, so
+     * a caller that draws frames needs the numbers that were actually uploaded rather than a guess. Values are captured
+     * during the upload, so asking costs one map lookup.</p>
+     *
+     * @param pack the owning content pack
+     * @param id   the texture resource identifier
+     * @return the texture and its pixel size, or {@code null} when it is missing or unusable
+     */
+    public synchronized Uploaded getUploaded(ContentPack pack, ResourceId id) {
+        Entry entry = entry(pack, id);
+        if (entry == null || entry.textureId == null) {
+            return null;
+        }
+        return new Uploaded(entry.textureId, entry.width, entry.height);
+    }
+
+    /**
+     * Resolves, uploads and remembers one texture.
+     *
+     * @return the cache entry, or {@code null} when the resource is absent or could not be uploaded
+     */
+    private Entry entry(ContentPack pack, ResourceId id) {
         if (pack == null || id == null) {
             return null;
         }
@@ -79,11 +108,13 @@ public final class WeaponTextureCache {
             return null;
         }
         if (entry != null && entry.resource != null && entry.resource.isUnchanged()) {
-            return entry.textureId;
+            return entry.textureId == null ? null : entry;
         }
 
+        // A creator may write either the identifier form or the file name including the extension; both spellings name
+        // the same file and are resolved by the same tolerant lookup.
         Optional<ContentPackResources.Resolved> resolved =
-                ContentPackResources.find(pack, id, TEXTURE_DIRECTORY, ContentPackResources.TEXTURE_SUFFIXES);
+                ContentPackResources.findTexture(pack, id, TEXTURE_DIRECTORY);
         if (resolved.isEmpty()) {
             entries.put(key, ABSENT);
             // Built only when the warning is actually emitted, so a remembered miss costs nothing per frame.
@@ -93,16 +124,16 @@ public final class WeaponTextureCache {
             return null;
         }
 
-        Identifier textureId = upload(pack, resolved.get());
-        entries.put(key, new Entry(resolved.get(), textureId));
-        return textureId;
+        Entry uploaded = upload(pack, resolved.get());
+        entries.put(key, uploaded);
+        return uploaded.textureId == null ? null : uploaded;
     }
 
-    private Identifier upload(ContentPack pack, ContentPackResources.Resolved resource) {
+    private Entry upload(ContentPack pack, ContentPackResources.Resolved resource) {
         Optional<byte[]> bytes = ContentPackResources.readBytes(resource);
         if (bytes.isEmpty()) {
             reportOnce(resource, "The weapon texture could not be read from disk");
-            return null;
+            return new Entry(resource, null, 0, 0);
         }
 
         NativeImage image;
@@ -110,22 +141,23 @@ public final class WeaponTextureCache {
             image = NativeImage.read(bytes.get());
         } catch (IOException e) {
             reportOnce(resource, "The weapon texture is not a readable image: " + e.getMessage());
-            return null;
+            return new Entry(resource, null, 0, 0);
         }
 
         Identifier textureId = textureId(pack, resource.id());
+        int width = image.getWidth();
+        int height = image.getHeight();
         try {
             DynamicTexture texture = new DynamicTexture(() -> "ARG " + resource.id(), image);
             Minecraft.getInstance().getTextureManager().register(textureId, texture);
         } catch (RuntimeException e) {
             image.close();
             reportOnce(resource, "Failed to upload the weapon texture: " + e.getMessage());
-            return null;
+            return new Entry(resource, null, 0, 0);
         }
 
-        Constants.LOG.info("[ARG] Uploaded weapon texture '{}' as {} ({}x{})", resource.id(), textureId,
-                image.getWidth(), image.getHeight());
-        return textureId;
+        Constants.LOG.info("[ARG] Uploaded weapon texture '{}' as {} ({}x{})", resource.id(), textureId, width, height);
+        return new Entry(resource, textureId, width, height);
     }
 
     /**
@@ -175,10 +207,20 @@ public final class WeaponTextureCache {
     private static final java.util.Set<String> reported = new java.util.HashSet<>();
 
     /**
+     * @param texture  the registered texture
+     * @param width    the uploaded image width in pixels
+     * @param height   the uploaded image height in pixels
+     */
+    public record Uploaded(Identifier texture, int width, int height) {
+    }
+
+    /**
      * @param resource  the file the entry came from, or {@code null} when the resource was not found
      * @param textureId the registered texture, or {@code null} when the upload failed
+     * @param width     the uploaded image width in pixels, {@code 0} when the upload failed
+     * @param height    the uploaded image height in pixels, {@code 0} when the upload failed
      */
-    private record Entry(ContentPackResources.Resolved resource, Identifier textureId) {
+    private record Entry(ContentPackResources.Resolved resource, Identifier textureId, int width, int height) {
     }
 }
 

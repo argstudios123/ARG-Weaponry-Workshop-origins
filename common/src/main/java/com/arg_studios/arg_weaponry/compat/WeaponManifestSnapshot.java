@@ -160,7 +160,10 @@ public final class WeaponManifestSnapshot {
         for (WeaponDefinition.ReloadStep step : definition.reloadSequences()) {
             canonical.append(text(step.phase())).append('|').append(text(step.animation())).append('|')
                     .append(step.duration()).append('|').append(text(step.when())).append('|')
-                    .append(step.repeat() == null ? "-" : step.repeat()).append(';');
+                    .append(step.repeat() == null ? "-" : step.repeat()).append('|')
+                    // The insertion point changes when a shell appears mid-clip, so two definitions that differ only in
+                    // "insert_at" must not hash the same: the digest is what the compatibility handshake compares.
+                    .append(step.insertAt() == null ? "-" : step.insertAt().toString()).append(';');
         }
 
         return sha256(canonical.toString());

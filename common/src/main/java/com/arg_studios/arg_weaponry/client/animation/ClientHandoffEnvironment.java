@@ -105,7 +105,9 @@ public final class ClientHandoffEnvironment implements HandoffEnvironment {
 
     @Override
     public boolean actionOwnsPlayback() {
-        VisualWeapon weapon = VisualWeapons.instance().active(net.minecraft.world.InteractionHand.MAIN_HAND);
+        // Only a weapon that is being drawn can own playback, so the non-adopting lookup is used here as well: asking the
+        // registry to adopt the live stack from a decision method would create a visual weapon as a side effect of a question.
+        VisualWeapon weapon = VisualWeapons.instance().drawn(net.minecraft.world.InteractionHand.MAIN_HAND);
         if (weapon == null) {
             return false;
         }

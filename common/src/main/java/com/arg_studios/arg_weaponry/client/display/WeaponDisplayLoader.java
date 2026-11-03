@@ -112,12 +112,12 @@ public final class WeaponDisplayLoader {
                 "the weapon cannot be rendered without a texture");
         ResourceId animations = readReference(pack, source, document, "animations", false, report,
                 "animation playback is not implemented in this milestone");
-        ResourceId slot = readReference(pack, source, document, "slot", false, report,
-                "the weapon keeps the built-in placeholder icon in GUI contexts until a slot texture is declared");
+        ResourceId slot = SlotTextureId.canonical(readReference(pack, source, document, "slot", false, report,
+                "the weapon keeps the built-in placeholder icon in GUI contexts until a slot texture is declared"));
 
         for (String key : document.keySet()) {
             if (!key.equals("model") && !key.equals("texture") && !key.equals("animations") && !key.equals("slot")
-                    && !key.equals("display")) {
+                    && !key.equals("display") && !key.equals("display_views")) {
                 report.info(pack.id(), source, "$." + key,
                         "The display configuration declares '" + key + "', which this milestone does not interpret");
             }
@@ -165,21 +165,28 @@ public final class WeaponDisplayLoader {
     private static Map<String, DisplayTransform> readTransforms(ContentPack pack, String source, JsonObject document,
                                                                 ValidationReport report) {
         Map<String, DisplayTransform> transforms = new LinkedHashMap<>();
+        // The shipped documents declare their per-context transforms under 'display_views' (the same key the ammunition loader
+        // reads); 'display' is the older spelling and still wins when both are present.
         JsonElement displayElement = document.get("display");
+        String contextKey = "display";
+        if (displayElement == null && document.has("display_views")) {
+            displayElement = document.get("display_views");
+            contextKey = "display_views";
+        }
         if (displayElement == null) {
-            report.info(pack.id(), source, "$.display", "The display configuration declares no per-context "
+            report.info(pack.id(), source, "$.display_views", "The display configuration declares no per-context "
                     + "transforms; every context uses the identity transform");
             return transforms;
         }
         if (!(displayElement instanceof JsonObject display)) {
-            report.error(pack.id(), source, "$.display", "Expected an object of display contexts but found "
+            report.error(pack.id(), source, "$." + contextKey, "Expected an object of display contexts but found "
                     + JsonValues.describeType(displayElement));
             return transforms;
         }
 
         for (Map.Entry<String, JsonElement> entry : display.entrySet()) {
             String context = entry.getKey();
-            String pointer = "$.display." + context;
+            String pointer = "$." + contextKey + "." + context;
             if (!KNOWN_CONTEXTS.contains(context)) {
                 report.warning(pack.id(), source, pointer, "Unknown display context '" + context
                         + "'; it is preserved but never used. Known contexts: " + KNOWN_CONTEXTS);

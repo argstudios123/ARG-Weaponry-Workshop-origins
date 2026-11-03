@@ -26,17 +26,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Shared framework bootstrap.
- *
- * <p>Called once by each loader entry point during mod initialisation, which is deliberately early:
- * Minecraft freezes its registries after initialisation, so anything that will later register items
- * or creative tabs has to be discovered here rather than during a resource reload.</p>
- *
- * <p>The order inside {@link #init()} matters and is: install the bundled packs, discover them, load
- * <strong>ammunition definitions</strong>, index them, and only then load the weapon definitions — so a
- * weapon's {@code ammo_to_use} entries can already be resolved while that weapon is being validated.</p>
- */
+
 public final class ArgWeaponry {
 
     private static List<ContentPack> contentPacks = List.of();
@@ -59,6 +49,10 @@ public final class ArgWeaponry {
         Constants.LOG.info("[ARG] {} ({}) starting on {} ({} environment)",
                 Constants.MOD_NAME, Constants.MOD_ID,
                 Services.PLATFORM.getPlatformName(), Services.PLATFORM.getEnvironmentName());
+
+        // The global configuration is read before anything else, so the very first client tick already sees the
+        // player's aiming preference. A missing file is created with the documented defaults.
+        com.arg_studios.arg_weaponry.config.ArgConfig.load();
 
         ValidationReport report = new ValidationReport();
         List<Path> contentRoots = Services.MOD_ROOTS.getContentRootPaths();
@@ -143,41 +137,21 @@ public final class ArgWeaponry {
         return ammunitionLoadResult.ammunitionDefinitions();
     }
 
-    /**
-     * @return the full ammunition loading outcome, including rejected definitions
-     */
+
     public static AmmunitionLoadResult ammunitionLoadResult() {
         return ammunitionLoadResult;
     }
-
-    /**
-     * @return the content packs discovered during {@link #init()}, in discovery order
-     */
     public static List<ContentPack> contentPacks() {
         return contentPacks;
     }
-
-    /**
-     * @return the weapon definitions that parsed successfully during {@link #init()}, in discovery order
-     */
     public static List<WeaponDefinition> weaponDefinitions() {
         return weaponLoadResult.definitions();
     }
-
-    /**
-     * @return the full weapon loading outcome, including rejected definitions
-     */
     public static WeaponLoadResult weaponLoadResult() {
         return weaponLoadResult;
     }
 
-    /**
-     * Registers the weapon data components. Must be called from the loader's safe registration point and
-     * <strong>before</strong> {@link #registerItems()}, because every weapon item declares the
-     * {@code arg_weaponry:weapon_state} default: Fabric calls this during mod initialisation, NeoForge
-     * from the {@code RegisterEvent} for {@code minecraft:data_component_type}, which it fires before the
-     * item registry event.
-     */
+
     public static void registerComponents() {
         if (!initialized) {
             Constants.LOG.error("[ARG] Component registration was requested before initialisation; ignoring "

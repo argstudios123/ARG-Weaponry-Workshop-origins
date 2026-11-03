@@ -169,4 +169,20 @@ public final class AmmunitionRegistry {
     public static List<AmmunitionEntries> entriesOf(WeaponDefinition definition) {
         return AmmunitionEntries.of(definition, itemIdsByName());
     }
+
+    /**
+     * @param definition the weapon definition, may be {@code null}
+     * @return whether the weapon declares the {@code creative_ammo} fallback in {@code ammo_to_use}
+     */
+    public static boolean declaresCreativeFallback(WeaponDefinition definition) {
+        if (definition == null || definition.ammoToUse().isEmpty()) {
+            return false;
+        }
+        for (AmmunitionEntries entry : entriesOf(definition)) {
+            if (CreativeAmmunition.isFallback(entry)) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

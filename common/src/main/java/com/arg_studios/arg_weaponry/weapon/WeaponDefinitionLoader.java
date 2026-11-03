@@ -17,14 +17,15 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
 /**
  * Discovers weapon definitions inside the discovered content packs and parses them.
  *
  * <p>Definitions are looked up below {@code assets/<namespace>/weapons_registry/weapons/}, the one
- * location the existing schema establishes. Other registry categories, HUD, effects and data files
- * are reported but not parsed by this milestone.</p>
+ * location the existing schema establishes. Discovery itself - recursion, the ".json" filter, the derived registry
+ * identity - lives in {@link WeaponDefinitionDiscovery}; this class adds the per-file diagnostics, the duplicate
+ * checks and the parsing. Other registry categories, HUD, effects and data files are reported but not parsed by this
+ * milestone.</p>
  *
  * <p>Each file is handled independently: reading, JSON syntax, document structure, required
  * properties and duplicate identities can each reject one definition while all others continue.</p>
@@ -36,8 +37,6 @@ public final class WeaponDefinitionLoader {
 
     /** Directory below the registry that holds firearm definitions. */
     public static final String WEAPONS_DIRECTORY = REGISTRY_DIRECTORY + "/weapons";
-
-    private static final String JSON_EXTENSION = ".json";
 
     private WeaponDefinitionLoader() {
     }
@@ -81,11 +80,8 @@ public final class WeaponDefinitionLoader {
         if (!Files.isDirectory(weaponsRoot)) {
             return List.of();
         }
-        try (Stream<Path> walk = Files.walk(weaponsRoot)) {
-            List<Path> files = walk.filter(Files::isRegularFile)
-                    .filter(file -> file.getFileName().toString().endsWith(JSON_EXTENSION))
-                    .sorted()
-                    .toList();
+        try {
+            List<Path> files = WeaponDefinitionDiscovery.listDefinitionFiles(weaponsRoot);
             if (files.isEmpty()) {
                 report.info(pack.id(), "assets/" + namespace + "/" + WEAPONS_DIRECTORY,
                         "The weapon directory exists but contains no definitions");
@@ -107,13 +103,10 @@ public final class WeaponDefinitionLoader {
                                        Map<ResourceId, String> claimedFileIdentities,
                                        Map<ResourceId, String> claimedAuthoritativeIdentities) {
         String packRelative = pack.root().relativize(file).toString().replace('\\', '/');
-        String namespaceRelative = weaponsRoot.relativize(file).toString().replace('\\', '/');
-        String identityPath = "weapons/" + namespaceRelative
-                .substring(0, namespaceRelative.length() - JSON_EXTENSION.length());
 
         ResourceId registryId;
         try {
-            registryId = new ResourceId(namespace, identityPath);
+            registryId = WeaponDefinitionDiscovery.registryIdentity(namespace, weaponsRoot, file);
         } catch (IllegalArgumentException e) {
             report.error(pack.id(), packRelative, "$", "The file location cannot form a valid registry identity: "
                     + e.getMessage() + ". The file was left unchanged");
@@ -143,7 +136,11 @@ public final class WeaponDefinitionLoader {
             root = JsoncReader.parse(text);
         } catch (JsoncReader.JsoncException e) {
             report.error(pack.id(), packRelative, e.describeLocation(), "Invalid JSON: " + e.getMessage());
-            rejected.add(new WeaponLoadResult.RejectedDefinition(pack.id(), packRelative, "invalid JSON"));
+            // The location belongs in the rejection reason too: the summary line a creator reads first is the
+            // "rejected weapon definition ..." log entry, and without the position a syntax error in a large
+            // definition is nearly impossible to find.
+            rejected.add(new WeaponLoadResult.RejectedDefinition(pack.id(), packRelative,
+                    "invalid JSON (" + e.describeLocation() + ")"));
             return;
         }
 

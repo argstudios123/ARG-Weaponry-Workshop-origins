@@ -7,6 +7,7 @@ import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
 import com.arg_studios.arg_weaponry.weapon.state.FireMode;
 import com.arg_studios.arg_weaponry.weapon.state.WeaponComponents;
 import com.arg_studios.arg_weaponry.weapon.state.WeaponState;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
@@ -44,6 +45,21 @@ public class WeaponItem extends Item {
     /** @return the parsed definition behind this item. */
     public WeaponDefinition definition() {
         return definition;
+    }
+
+    /**
+     * The item's display name.
+     *
+     * <p>Vanilla would ask for {@code item.<namespace>.<path>} directly and show the key when the content pack has no
+     * translation for it. This override keeps the translation when there is one and otherwise shows the {@code weapon_name}
+     * the definition already declares, so an untranslated pack is readable instead of showing a key.</p>
+     *
+     * @param itemStack the stack being named
+     * @return the translated name, or a readable fallback built from the declared weapon name
+     */
+    @Override
+    public Component getName(ItemStack itemStack) {
+        return ItemNames.of(getDescriptionId(), definition == null ? null : definition.name());
     }
 
     // --- weapon state ---

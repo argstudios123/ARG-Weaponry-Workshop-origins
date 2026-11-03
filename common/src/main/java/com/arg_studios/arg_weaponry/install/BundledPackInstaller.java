@@ -20,27 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/**
- * Installs the content packs that are bundled inside the mod into {@code <gameDir>/arg_weaponry/}
- * and keeps them up to date without ever discarding a creator's or user's edits.
- *
- * <p>Policies:</p>
- * <ul>
- *     <li><b>Fresh install</b> — the bundled pack is staged in {@code .staging/}, verified against the
- *     bundled fingerprint and then moved into place.</li>
- *     <li><b>Adoption</b> — a folder that exists without install state is recorded as
- *     {@code managed = false} and left completely untouched. Adopted folders are never updated
- *     automatically; a changed bundled version is only reported.</li>
- *     <li><b>Unmodified, bundled changed</b> — a verified backup is written to
- *     {@code .backups/<pack>/<timestamp>/} before the folder is replaced. If the backup or the staged
- *     copy cannot be verified the update is aborted and the existing folder stays as it is.</li>
- *     <li><b>Modified locally</b> — nothing is written; the situation is reported and the user is told
- *     how to refresh the pack.</li>
- * </ul>
- *
- * <p>Every recursive delete verifies that the target is a path this class created below the install
- * root, so a failed update can never remove an unrelated directory.</p>
- */
+
 public final class BundledPackInstaller {
 
     /** Folder name of the bundled default pack, both inside the mod and in the install root. */

@@ -1,11 +1,13 @@
 package com.arg_studios.arg_weaponry.client.camera;
 
 import com.arg_studios.arg_weaponry.Constants;
+import com.arg_studios.arg_weaponry.client.aiming.WeaponAiming;
 import com.arg_studios.arg_weaponry.client.animation.WeaponViewControllers;
 import com.arg_studios.arg_weaponry.client.display.WeaponDisplay;
 import com.arg_studios.arg_weaponry.client.render.WeaponDisplayCache;
 import com.arg_studios.arg_weaponry.client.render.WeaponModelCache;
 import com.arg_studios.arg_weaponry.item.WeaponItem;
+import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
 import com.arg_studios.arg_weaponry.weapon.animation.WeaponPose;
 import com.arg_studios.arg_weaponry.weapon.model.WeaponModel;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -48,6 +50,7 @@ import org.joml.Quaternionf;
 public final class FirstPersonCamera {
 
     private static WeaponModel model;
+    private static WeaponDefinition ownerDefinition;
     private static String ownerItemId;
     private static String animationName;
     private static boolean reportedScaleChannel;
@@ -76,6 +79,7 @@ public final class FirstPersonCamera {
             return;
         }
         model = resolved;
+        ownerDefinition = item.definition();
         ownerItemId = String.valueOf(BuiltInRegistries.ITEM.getKey(item));
         animationName = null;
     }
@@ -98,6 +102,9 @@ public final class FirstPersonCamera {
         if (pose == null) {
             return null;
         }
+        // The camera reads the same constrained pose as the weapon, otherwise the ADS constraint would move the gun while
+        // leaving the camera on the unconstrained animation.
+        pose = WeaponAiming.constrainPose(pose, model, ownerDefinition, partialTick);
         if (CameraBoneAnimation.hasScaleChannel(pose) && !reportedScaleChannel) {
             reportedScaleChannel = true;
             Constants.LOG.info("[ARG] The animation '{}' scales the '{}' bone. A camera cannot be scaled in Minecraft's "
@@ -196,6 +203,7 @@ public final class FirstPersonCamera {
     /** Drops the stored owner and model. */
     public static void clear() {
         model = null;
+        ownerDefinition = null;
         ownerItemId = null;
         animationName = null;
     }

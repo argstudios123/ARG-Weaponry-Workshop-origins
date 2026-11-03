@@ -7,6 +7,7 @@ import com.arg_studios.arg_weaponry.client.audio.WeaponActionSounds;
 import com.arg_studios.arg_weaponry.weapon.equip.EquipAnimationResolver;
 import com.arg_studios.arg_weaponry.weapon.equip.FirstDrawFlag;
 import com.arg_studios.arg_weaponry.weapon.equip.FirstDrawGuard;
+import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
 import com.arg_studios.arg_weaponry.weapon.handoff.HandoffVisuals;
 import com.arg_studios.arg_weaponry.weapon.handoff.WeaponIdentity;
 import net.minecraft.world.InteractionHand;
@@ -31,9 +32,8 @@ public final class ClientHandoffVisuals implements HandoffVisuals {
     }
 
     @Override
-    public WeaponIdentity activeIdentity() {
-        VisualWeapon weapon = VisualWeapons.instance().active(hand);
-        return weapon == null ? WeaponIdentity.NONE : weapon.identity();
+    public WeaponIdentity visualIdentity() {
+        return VisualWeapons.instance().drawnIdentity(hand);
     }
 
     @Override
@@ -48,7 +48,9 @@ public final class ClientHandoffVisuals implements HandoffVisuals {
 
     @Override
     public double playHolster() {
-        VisualWeapon weapon = VisualWeapons.instance().active(hand);
+        // The weapon that is drawn, never the live stack: if nothing is drawn there is no holster to play, and adopting one
+        // here would hide a weapon that was never on screen behind an animation the player cannot associate with anything.
+        VisualWeapon weapon = VisualWeapons.instance().drawn(hand);
         if (weapon == null) {
             return 0.0;
         }
@@ -63,13 +65,13 @@ public final class ClientHandoffVisuals implements HandoffVisuals {
 
     @Override
     public boolean holsterFinished() {
-        VisualWeapon weapon = VisualWeapons.instance().active(hand);
+        VisualWeapon weapon = VisualWeapons.instance().drawn(hand);
         return weapon != null && weapon.equipClipFinished();
     }
 
     @Override
     public void stopHolster() {
-        VisualWeapon weapon = VisualWeapons.instance().active(hand);
+        VisualWeapon weapon = VisualWeapons.instance().drawn(hand);
         if (weapon != null) {
             // Ends the holster clip and returns to idle through the animator's own cross-fade, so the weapon settles
             // instead of jumping back to its first idle frame.
@@ -79,21 +81,22 @@ public final class ClientHandoffVisuals implements HandoffVisuals {
 
     @Override
     public double playDraw() {
-        VisualWeapon weapon = VisualWeapons.instance().active(hand);
+        VisualWeapon weapon = VisualWeapons.instance().drawn(hand);
         if (weapon == null) {
             Constants.LOG.debug("[ARG] Handoff playDraw: no visual weapon for {}", hand);
             return 0.0;
         }
         boolean firstDraw = FirstDrawFlag.shouldUseFirstDraw(weapon.stack(), weapon.identity().slot(),
                 weapon.identity().itemId());
-        EquipAnimationResolver.Selection played = playFirst(weapon,
+        EquipAnimationResolver.Selection played = armFirst(weapon,
                 EquipAnimationResolver.drawCandidates(weapon.definition(), weapon.ammoAtAdoption(), firstDraw));
         if (played == null) {
             Constants.LOG.debug("[ARG] Handoff playDraw: no draw clip for '{}' ammo={} firstDraw={}",
                     weapon.identity().itemId(), weapon.ammoAtAdoption(), firstDraw);
             return 0.0;
         }
-        WeaponActionSounds.draw(weapon.definition(), played.firstDraw(), weapon.ammoAtAdoption() <= 0);
+        WeaponActionSounds.draw(weapon.definition(), firstDrawSound(weapon.definition(), played),
+                weapon.ammoAtAdoption() <= 0);
         if (played.firstDrawEntry()) {
             // The first-draw animation has been consumed on this client; the guard keeps a fast switch from replaying it
             // before the server's persistent flag arrives.
@@ -102,15 +105,45 @@ public final class ClientHandoffVisuals implements HandoffVisuals {
         return played.durationSeconds();
     }
 
+    /**
+     * [FirstDraw] Whether the draw <em>sound</em> may be the first-draw one.
+     *
+     * <p>The first-draw sound and the first-draw clip are one action and must never disagree: if a weapon declares a
+     * first-draw clip but its animation resource cannot provide it, the ordinary draw clip plays - and the first-draw sound
+     * on top of it was exactly the "the sound plays, the animation does not" report. The sound therefore follows the entry
+     * that really played.</p>
+     *
+     * <p>The one exception keeps the documented sound-only behaviour: a weapon that declares a first-draw <em>sound</em> but
+     * no first-draw <em>clip</em> still plays that sound on the first draw, because then there is no clip for it to disagree
+     * with.</p>
+     *
+     * @param definition the weapon definition
+     * @param played     the selection that actually played
+     * @return whether the first-draw sound should be used
+     */
+    public static boolean firstDrawSound(WeaponDefinition definition, EquipAnimationResolver.Selection played) {
+        if (played == null) {
+            return false;
+        }
+        return played.firstDrawEntry()
+                || (played.firstDraw() && !EquipAnimationResolver.hasFirstDrawEntry(definition));
+    }
+
+    @Override
+    public boolean releaseDraw() {
+        VisualWeapon weapon = VisualWeapons.instance().drawn(hand);
+        return weapon != null && weapon.releaseDrawPlayback();
+    }
+
     @Override
     public boolean drawFinished() {
-        VisualWeapon weapon = VisualWeapons.instance().active(hand);
+        VisualWeapon weapon = VisualWeapons.instance().drawn(hand);
         return weapon != null && weapon.equipClipFinished();
     }
 
     @Override
     public void settleDraw() {
-        VisualWeapon weapon = VisualWeapons.instance().active(hand);
+        VisualWeapon weapon = VisualWeapons.instance().drawn(hand);
         if (weapon != null) {
             weapon.finishEquip();
         }
@@ -131,6 +164,25 @@ public final class ClientHandoffVisuals implements HandoffVisuals {
                 continue;
             }
             if (weapon.playEquip(candidate.clip(), candidate.durationSeconds())) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Arms the first candidate the weapon's animation resource can actually play.
+     *
+     * <p>The armed clip is paused at its first frame and fades in from the pose the outgoing weapon was last drawn with, so
+     * the frame in which the weapon is first drawn is the frame the raise starts from.</p>
+     */
+    private static EquipAnimationResolver.Selection armFirst(VisualWeapon weapon,
+                                                             List<EquipAnimationResolver.Selection> candidates) {
+        for (EquipAnimationResolver.Selection candidate : candidates) {
+            if (candidate == null || candidate.clip() == null || candidate.clip().isBlank()) {
+                continue;
+            }
+            if (weapon.armDraw(candidate.clip(), candidate.durationSeconds())) {
                 return candidate;
             }
         }

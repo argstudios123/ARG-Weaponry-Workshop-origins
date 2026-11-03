@@ -3,6 +3,10 @@ plugins {
     id 'net.neoforged.moddev'
 }
 
+// Mirrors the Fabric build: the dev-run renderer testing aids and the graphics backend choice share one
+// switch (-PargRenderers=true). Dev-run only; it never affects a build.
+def argRenderers = providers.gradleProperty('argRenderers').map { it.toBoolean() }.getOrElse(false)
+
 // Here add Repositories  and dependencies
 repositories {
     maven {
@@ -31,6 +35,12 @@ neoForge {
         client {
             client()
             gameDirectory = this.mkdir(this.file('runs/client'))
+            // Same reason as the Fabric client run: Minecraft 26.3 cannot create its OpenGL backend window on
+            // this machine (EGL_BAD_DISPLAY in SDL3/NVIDIA under Wayland), so the dev client starts on Vulkan
+            // instead of failing the OpenGL attempt first. Machines without Vulkan fall back to OpenGL.
+            if (!argRenderers) {
+                programArguments.addAll '--graphicsBackend', 'vulkan'
+            }
         }
         data {
             clientData()

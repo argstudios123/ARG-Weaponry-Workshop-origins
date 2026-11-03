@@ -30,6 +30,11 @@ tasks.named('compileJava', JavaCompile) {
 processResources {
     dependsOn(configurations.commonResources)
     from(configurations.commonResources)
+    // Muzzle-flash authoring material lives next to the placeholder texture so a creator finds it where the
+    // texture is, but the layered source and its notes are development files: the placeholder PNG ships (a
+    // weapon definition may reference it), the template does not.
+    exclude 'assets/arg_weaponry/templates/**/*.psd'
+    exclude 'assets/arg_weaponry/templates/**/README.md'
 }
 
 tasks.named('javadoc', Javadoc).configure {

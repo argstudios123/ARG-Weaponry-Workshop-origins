@@ -65,12 +65,30 @@ public final class DrawHolsterConfig {
      * @param holsterSwitchDelay            whether a hotbar switch waits for the holster clip
      * @param holsterSkipBelowDrawProgress  draw progress below which a switch skips the holster, in {@code [0, 1]}; {@code 0}
      *                                      disables the rule
+     * @param handoffEnabled                whether the handoff subsystem keeps the outgoing weapon visible for its holster
+     * @param blockGunsInOffhand            whether a weapon of this mod may never occupy the offhand; see
+     *                                      {@code OffhandRestriction}. Turning it off restores vanilla swapping for every
+     *                                      weapon, which is what a future dual-wield implementation would build on
      */
     public record Settings(boolean enableDrawHolster, boolean holsterSwitchDelay,
-                           double holsterSkipBelowDrawProgress, boolean handoffEnabled) {
+                           double holsterSkipBelowDrawProgress, boolean handoffEnabled,
+                           boolean blockGunsInOffhand) {
 
-        /** The documented defaults: feature on, delayed switches on, the skip rule off, handoff subsystem on. */
-        public static final Settings DEFAULT = new Settings(true, true, 0.0, true);
+        /** The documented defaults: feature on, delayed switches on, the skip rule off, handoff on, offhand blocked. */
+        public static final Settings DEFAULT = new Settings(true, true, 0.0, true, true);
+
+        /**
+         * Keeps the four-argument form used before the offhand restriction existed; it blocks the offhand.
+         *
+         * @param enableDrawHolster            the master switch
+         * @param holsterSwitchDelay           whether a hotbar switch waits for the holster clip
+         * @param holsterSkipBelowDrawProgress draw progress below which a switch skips the holster
+         * @param handoffEnabled               whether the handoff subsystem is active
+         */
+        public Settings(boolean enableDrawHolster, boolean holsterSwitchDelay, double holsterSkipBelowDrawProgress,
+                        boolean handoffEnabled) {
+            this(enableDrawHolster, holsterSwitchDelay, holsterSkipBelowDrawProgress, handoffEnabled, true);
+        }
 
         /**
          * Keeps the three-argument form used before the handoff subsystem existed; it enables the subsystem.
@@ -143,7 +161,8 @@ public final class DrawHolsterConfig {
                     booleanValue(root, "holsterSwitchDelay", Settings.DEFAULT.holsterSwitchDelay()),
                     doubleValue(root, "holsterSkipBelowDrawProgress",
                             Settings.DEFAULT.holsterSkipBelowDrawProgress()),
-                    booleanValue(root, "handoffEnabled", Settings.DEFAULT.handoffEnabled()));
+                    booleanValue(root, "handoffEnabled", Settings.DEFAULT.handoffEnabled()),
+                    booleanValue(root, "blockGunsInOffhand", Settings.DEFAULT.blockGunsInOffhand()));
         } catch (RuntimeException e) {
             Constants.LOG.warn("[ARG] {} could not be read ({}); the draw/holster defaults are used", FILE_NAME,
                     e.getMessage());

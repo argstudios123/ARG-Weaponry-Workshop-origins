@@ -71,6 +71,10 @@ public final class NeoForgeClientSetup {
     }
 
     private static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
+        // The mod's own category is registered before the bindings that use it. NeoForge replaced
+        // KeyMapping.Category.register(Identifier) with this event so it can order modded categories after the vanilla
+        // ones; Fabric needs no equivalent call, its key-mapping API appends the bindings directly.
+        event.registerCategory(WeaponKeyCategory.CATEGORY);
         event.register(WeaponReloadKey.KEY);
         event.register(WeaponFireModeKey.KEY);
         event.register(WeaponInspectKey.KEY);

@@ -151,7 +151,8 @@ public final class WeaponFireSessions {
             return reject(player, hand, sequence, WeaponActionResult.CONTENT_MISMATCH);
         }
         AmmoCapacity capacity = weapon.ammoCapacity();
-        WeaponActionResult allowed = WeaponActionRules.validateFire(capacity, state, definition.firingModes());
+        WeaponActionResult allowed = WeaponActionRules.validateFire(capacity, state, definition.firingModes(),
+                definition.allowFiringWhenSprinting(), player.isSprinting());
         if (!allowed.isAllowed()) {
             return reject(player, hand, sequence, allowed);
         }
@@ -373,8 +374,9 @@ public final class WeaponFireSessions {
             // the weapon no longer selects.
             return WeaponActionResult.FIRE_MODE_UNSUPPORTED;
         }
-        return WeaponActionRules.validateFire(weapon.ammoCapacity(), state, definition.firingModes()).isAllowed()
-                ? null : WeaponActionResult.MAGAZINE_EMPTY;
+        WeaponActionResult validation = WeaponActionRules.validateFire(weapon.ammoCapacity(), state,
+                definition.firingModes(), definition.allowFiringWhenSprinting(), player.isSprinting());
+        return validation.isAllowed() ? null : validation;
     }
 
     /**

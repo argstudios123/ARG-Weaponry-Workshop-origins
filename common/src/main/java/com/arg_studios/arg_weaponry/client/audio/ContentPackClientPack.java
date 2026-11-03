@@ -12,6 +12,9 @@ import com.arg_studios.arg_weaponry.ArgWeaponry;
 import com.arg_studios.arg_weaponry.client.display.WeaponDisplay;
 import com.arg_studios.arg_weaponry.client.display.WeaponDisplayLoader;
 import com.arg_studios.arg_weaponry.core.ValidationReport;
+import com.arg_studios.arg_weaponry.item.AmmunitionRegistration;
+import com.arg_studios.arg_weaponry.item.ContentPackLanguage;
+import com.arg_studios.arg_weaponry.item.WeaponRegistration;
 import com.arg_studios.arg_weaponry.pack.ContentPack;
 import com.arg_studios.arg_weaponry.weapon.ResourceId;
 import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
@@ -78,6 +81,8 @@ public final class ContentPackClientPack extends PathPackResources {
     /** The model id path, i.e. what follows {@code models/} in the file layout. */
     private static final String SLOT_MODEL_ID_PATH = "arg_slot/";
     private static final String TEXTURES_DIRECTORY = "textures";
+    /** Directory inside {@code textures/} that the vanilla item atlas stitches, and where the slot icon is mirrored. */
+    private static final String SLOT_TEXTURE_DIRECTORY = "item/arg_slot/";
     private static final String JSON_EXTENSION = ".json";
     private static final String PNG_EXTENSION = ".png";
 
@@ -85,6 +90,8 @@ public final class ContentPackClientPack extends PathPackResources {
     private final ContentPack pack;
     private final Map<String, byte[]> synthesisedByNamespace = new ConcurrentHashMap<>();
     private final Map<String, byte[]> synthesisedDocuments = new ConcurrentHashMap<>();
+    /** The merged {@code lang/en_us.json} of this pack; built once, because it is only read during a language load. */
+    private byte[] languageDocument;
     private Map<String, String> slotTexturesByItemPath;
 
     /**
@@ -141,6 +148,12 @@ public final class ContentPackClientPack extends PathPackResources {
             return null;
         }
         IoSupplier<InputStream> original = super.getResource(type, location);
+        if (ContentPackLanguage.resourcePath().equals(location.getPath())) {
+            // The pack's language file is served merged, never as the raw file: an empty or malformed document used to make
+            // Minecraft fail the *whole* language load, which left every key in the game untranslated.
+            byte[] document = languageDocument(original);
+            return () -> new ByteArrayInputStream(document);
+        }
         if (!SOUNDS_JSON.equals(location.getPath())) {
             if (original != null) {
                 return original;
@@ -154,6 +167,72 @@ public final class ContentPackClientPack extends PathPackResources {
         }
         byte[] generated = synthesisedSoundsJson(location.getNamespace());
         return generated == null ? original : () -> new ByteArrayInputStream(generated);
+    }
+
+    /**
+     * Builds the language document a pack is served with.
+     *
+     * <p>It contains the pack's own entries (when its file is a valid object) plus a readable fallback for every item the
+     * pack registers and for the pack's declared name key, so a pack that ships no language file - or an empty one, as the
+     * shipped template did - still has named items and cannot break the game's language load.</p>
+     *
+     * @param original the pack's own language resource, may be {@code null}
+     * @return the document's bytes, never {@code null} and never empty
+     */
+    private byte[] languageDocument(IoSupplier<InputStream> original) {
+        if (languageDocument != null) {
+            return languageDocument;
+        }
+        byte[] document = ContentPackLanguage.mergedDocument(readBytes(original), languageFallbacks())
+                .getBytes(StandardCharsets.UTF_8);
+        languageDocument = document;
+        return document;
+    }
+
+    /**
+     * @return the generated entries for this pack: its name key and every item it registers
+     */
+    private java.util.Map<String, String> languageFallbacks() {
+        java.util.Map<String, String> fallbacks = new TreeMap<>();
+        if (pack == null) {
+            return fallbacks;
+        }
+        String nameKey = pack.metadata() == null ? null : pack.metadata().nameKey();
+        if (nameKey != null && nameKey.indexOf('.') >= 0 && nameKey.indexOf(' ') < 0) {
+            ContentPackLanguage.addTranslationName(fallbacks, nameKey, pack.id());
+        }
+        for (WeaponRegistration.RegisteredWeapon weapon : WeaponRegistration.registeredWeapons()) {
+            if (!weapon.plan().pack().id().equals(pack.id())) {
+                continue;
+            }
+            ContentPackLanguage.addItemName(fallbacks, weapon.itemId().getNamespace(), weapon.itemId().getPath(),
+                    weapon.plan().definition().name());
+        }
+        for (AmmunitionRegistration.RegisteredAmmunition ammunition : AmmunitionRegistration.registeredAmmunition()) {
+            if (!ammunition.pack().id().equals(pack.id())) {
+                continue;
+            }
+            ContentPackLanguage.addItemName(fallbacks, ammunition.itemId().getNamespace(),
+                    ammunition.itemId().getPath(), ammunition.definition().ammoName());
+        }
+        return fallbacks;
+    }
+
+    /**
+     * Reads a resource completely, treating a failure as an absent document.
+     *
+     * @param supplier the resource, may be {@code null}
+     * @return its bytes, or {@code null} when it cannot be read
+     */
+    private static byte[] readBytes(IoSupplier<InputStream> supplier) {
+        if (supplier == null) {
+            return null;
+        }
+        try (InputStream stream = supplier.get()) {
+            return stream.readAllBytes();
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     /**
@@ -196,6 +275,17 @@ public final class ContentPackClientPack extends PathPackResources {
             return;
         }
         super.listResources(type, namespace, directory, output);
+        // A language file that only exists in memory has to be listed, or Minecraft never asks for it: the language manager
+        // discovers languages by listing the "lang" directory. A pack that ships no language file therefore still gets its
+        // generated item names.
+        if (ContentPackLanguage.LANGUAGE_DIRECTORY.equals(directory) && pack != null
+                && pack.providesNamespace(namespace)) {
+            Identifier languageId = Identifier.fromNamespaceAndPath(namespace, ContentPackLanguage.resourcePath());
+            if (super.getResource(PackType.CLIENT_RESOURCES, languageId) == null) {
+                byte[] document = languageDocument(null);
+                output.accept(languageId, () -> new ByteArrayInputStream(document));
+            }
+        }
         if (pack == null) {
             return;
         }
@@ -209,6 +299,11 @@ public final class ContentPackClientPack extends PathPackResources {
                     ITEMS_DIRECTORY + itemPath + JSON_EXTENSION), directory, output);
             listIfMatching(Identifier.fromNamespaceAndPath(namespace,
                     SLOT_MODEL_DIRECTORY + itemPath + JSON_EXTENSION), directory, output);
+            // The icon itself, mirrored into the one directory tree the item atlas stitches. See
+            // synthesisedSlotDocument: the declared path is not part of any atlas, so without this copy the model would
+            // reference a sprite that never exists and the slot would render as the missing-texture checkerboard.
+            listIfMatching(Identifier.fromNamespaceAndPath(namespace,
+                    TEXTURES_DIRECTORY + "/" + SLOT_TEXTURE_DIRECTORY + itemPath + PNG_EXTENSION), directory, output);
         }
     }
 
@@ -297,6 +392,11 @@ public final class ContentPackClientPack extends PathPackResources {
             return null;
         }
         String path = location.getPath();
+        if (path.startsWith(TEXTURES_DIRECTORY + "/" + SLOT_TEXTURE_DIRECTORY) && path.endsWith(PNG_EXTENSION)) {
+            String itemPath = path.substring((TEXTURES_DIRECTORY + "/" + SLOT_TEXTURE_DIRECTORY).length(),
+                    path.length() - PNG_EXTENSION.length());
+            return slotTextureDocument(location.getNamespace(), itemPath);
+        }
         String itemPath;
         boolean itemDefinition;
         if (path.startsWith(ITEMS_DIRECTORY) && path.endsWith(JSON_EXTENSION)) {
@@ -328,13 +428,49 @@ public final class ContentPackClientPack extends PathPackResources {
         } else {
             document.addProperty("parent", "minecraft:item/generated");
             JsonObject textures = new JsonObject();
-            textures.addProperty("layer0", slot);
+            // The mirrored copy, not the declared path: item models bake their sprites from Minecraft's item atlas, whose
+            // only sources are textures/item/**, textures/block/** and textures/gui/sprites/**. A declared icon under
+            // textures/gui/hud/slots/ is a real file but no atlas ever stitches it, so pointing layer0 at it renders the
+            // missing-texture checkerboard. slotTextureDocument() serves the same bytes from textures/item/arg_slot/.
+            textures.addProperty("layer0", location.getNamespace() + ":" + SLOT_TEXTURE_DIRECTORY + itemPath);
             document.add("textures", textures);
         }
         byte[] json = new GsonBuilder().setPrettyPrinting().create().toJson(document)
                 .getBytes(StandardCharsets.UTF_8);
         synthesisedDocuments.put(cacheKey, json);
         return json;
+    }
+
+    /**
+     * Returns the declared slot icon, served from the one texture tree the item atlas stitches.
+     *
+     * @param namespace the pack namespace
+     * @param itemPath  the weapon's item path inside that namespace
+     * @return the PNG bytes, or {@code null} when the weapon declares no icon or the file cannot be read
+     */
+    private byte[] slotTextureDocument(String namespace, String itemPath) {
+        String cacheKey = "tex:" + namespace + ":" + itemPath;
+        byte[] cached = synthesisedDocuments.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        String declared = slotTexturesByItemPath().get(namespace + ":" + itemPath);
+        if (declared == null) {
+            return null;
+        }
+        Path png = texturePath(declared);
+        if (png == null || !Files.isRegularFile(png)) {
+            return null;
+        }
+        try {
+            byte[] bytes = Files.readAllBytes(png);
+            synthesisedDocuments.put(cacheKey, bytes);
+            return bytes;
+        } catch (IOException e) {
+            Constants.LOG.warn("[ARG] The slot icon of '{}:{}' could not be read ({}); the placeholder icon is kept",
+                    namespace, itemPath, e.getMessage());
+            return null;
+        }
     }
 
     /**

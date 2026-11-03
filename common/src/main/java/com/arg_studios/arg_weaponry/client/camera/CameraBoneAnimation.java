@@ -3,6 +3,7 @@ package com.arg_studios.arg_weaponry.client.camera;
 import com.arg_studios.arg_weaponry.client.render.ViewBoneTransform;
 import com.arg_studios.arg_weaponry.weapon.animation.SampledBone;
 import com.arg_studios.arg_weaponry.weapon.animation.WeaponPose;
+import com.arg_studios.arg_weaponry.weapon.model.BoneTransformPolicy;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBone;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBoneNames;
 import com.arg_studios.arg_weaponry.weapon.model.RotationConvention;
@@ -10,7 +11,6 @@ import com.arg_studios.arg_weaponry.weapon.model.Vec3;
 import com.arg_studios.arg_weaponry.weapon.model.WeaponModel;
 import org.joml.Matrix3f;
 import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 /**
  * Turns the evaluated {@code camera} bone of a weapon pose into the camera change Minecraft needs.
@@ -41,8 +41,8 @@ import org.joml.Vector3f;
  *
  * <h2>The rest pose and the parents</h2>
  * <p>{@code D} is the bone's orientation <em>change</em>, not the animated triple on its own: see
- * {@link #boneOrientation(WeaponModel, WeaponPose)}, which composes {@code R_parent... * R_rest * R_animated} and
- * removes {@code R_parent... * R_rest}. A bone with an identity rest rotation and no rotated parent - including the
+ * {@link #boneOrientation(WeaponModel, WeaponPose)}, which composes {@code R_parent... * R(authored + animated)} and
+ * removes {@code R_parent... * R(authored)}. A bone with an identity rest rotation and no rotated parent - including the
  * shipped M100 DMR - gets exactly the same value as before, so this correction only changes models that the old
  * "the animated value is the whole orientation" assumption got wrong.</p>
  *
@@ -166,15 +166,15 @@ public final class CameraBoneAnimation {
      * camera space.
      *
      * <h4>Why the rest pose and the parents matter</h4>
-     * <p>An animation channel does not replace a bone's authored rotation: {@code AnimatedBoneTransform} composes
-     * {@code R(rest) * R(animated)} inside the pivot, and TaCZ's {@code BedrockPart} composes the animated quaternion
-     * after the authored one in exactly the same way. So the animated triple is a <strong>delta applied after the rest
-     * rotation</strong>, not an absolute orientation. Using it as if it were absolute is only correct when the rest
-     * rotation is the identity - true for the shipped M100 DMR camera bone, false for any model whose camera bone is
-     * tilted and for any model where a parent of the camera bone is rotated or animated.</p>
+     * <p>An animation channel is an additive delta on a bone's authored rotation, not an absolute orientation and not a
+     * second rotation to append: {@code BoneTransformPolicy} (and Blockbench's own {@code BoneAnimator#displayRotation})
+     * adds the animated Euler triple to the authored one and builds a single Z, Y, X rotation from the sum. Using the
+     * animated triple as if it were absolute is only correct when the rest rotation is the identity - true for the shipped
+     * M100 DMR camera bone, false for any model whose camera bone is tilted and for any model where a parent of the camera
+     * bone is rotated or animated.</p>
      *
-     * <p>The modelled orientation of the bone is {@code R_world = R_parent... * R_rest * R_animated}; before the
-     * animation it was {@code R_world_rest = R_parent... * R_rest}. The rotation that takes one to the other, expressed
+     * <p>The modelled orientation of the bone is {@code R_world = R_parent... * R(authored + animated)}; before the
+     * animation it was {@code R_world_rest = R_parent... * R(authored)}. The rotation that takes one to the other, expressed
      * in the model frame, is {@code R_rel = R_world * R_world_rest^-1}. Converting it into camera space is the same
      * mirror conjugation the geometry goes through: {@code M * R_rel * M}.</p>
      *
@@ -202,6 +202,10 @@ public final class CameraBoneAnimation {
     /**
      * Builds the modelled orientation of the {@code camera} bone, from the roots down to it.
      *
+     * <p>Each bone contributes <strong>one</strong> rotation, built from the sum of its authored and (when requested)
+     * animated Euler triples. That is the same arithmetic {@link com.arg_studios.arg_weaponry.weapon.model.BoneTransformPolicy}
+     * executes for the geometry, so the camera cannot disagree with the weapon about what an animation does.</p>
+     *
      * <p>Every rotation goes through {@link RotationConvention#toRenderSpace(Vec3)} and the renderer's Z-Y-X
      * composition order, so the value is the same frame {@code AnimatedBoneTransform} draws with - there is exactly one
      * rotation convention in this renderer and the camera reads it instead of restating it.</p>
@@ -217,13 +221,14 @@ public final class CameraBoneAnimation {
             return total;
         }
         for (ModelBone bone : chain(model)) {
-            total.mul(composeRotation(RotationConvention.toRenderSpace(bone.rotation())));
+            Vec3 rotation = bone.rotation();
             if (animated && pose != null) {
                 SampledBone sampled = pose.bone(bone.name());
                 if (sampled != null && sampled.rotation() != null) {
-                    total.mul(composeRotation(RotationConvention.toRenderSpace(sampled.rotation())));
+                    rotation = BoneTransformPolicy.authoredPlusAnimated(rotation, sampled.rotation());
                 }
             }
+            total.mul(composeRotation(RotationConvention.toRenderSpace(rotation)));
         }
         return total;
     }

@@ -1,11 +1,6 @@
 package com.arg_studios.arg_weaponry.client.aiming;
 
-/**
- * Why aim-down-sights cannot be entered, kept as a value so the client can report the reason exactly once per change.
- *
- * <p>A refusal is never silent in the log the first time it happens, and it never leaves the weapon in a half-aimed state:
- * every reason ends the aim transition the same way, by blending back to the ordinary placement.</p>
- */
+
 public enum AimBlockReason {
 
     /** Aiming is allowed; no reason to report. */
@@ -41,5 +36,14 @@ public enum AimBlockReason {
     /** @return {@code true} when this reason prevents aiming. */
     public boolean blocks() {
         return this != NONE;
+    }
+
+
+    public boolean clearsAimIntent() {
+        return switch (this) {
+            // An inspection cancels the aim intent instead of suspending it, so a latched toggle cannot survive it.
+            case NO_WEAPON, DISABLED, NO_AIMING_BONE, NO_MODEL, NOT_ALIVE, NO_INPUT_FOCUS, INSPECTING -> true;
+            case NONE, RELOADING, EQUIPPING -> false;
+        };
     }
 }

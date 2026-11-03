@@ -130,7 +130,10 @@ public final class WeaponReloadInput {
                 long durationMillis = Math.round(payload.durationTicks() * 1000.0 / ReloadRules.TICKS_PER_SECOND);
                 TRACKER.armExpiry(durationMillis, now);
                 double seconds = payload.durationTicks() / (double) ReloadRules.TICKS_PER_SECOND;
-                if (!WeaponViewControllers.instance().playReloadAnimation(hand, payload.animation(), seconds)) {
+                if (!payload.stages().isEmpty()) {
+                    // A staged reload: every clip the server planned is played at its own moment, starting now.
+                    ClientReloadSequence.start(hand, payload.stages());
+                } else if (!WeaponViewControllers.instance().playReloadAnimation(hand, payload.animation(), seconds)) {
                     Constants.LOG.debug("[ARG] The reload in {} was accepted but no reload animation started",
                             hand);
                 }
@@ -140,6 +143,7 @@ public final class WeaponReloadInput {
                 WeaponReloadSounds.play(hand, payload.emptyMagazine());
             }
             case APPLY_END -> {
+                ClientReloadSequence.cancel(hand);
                 WeaponViewControllers.instance().finishReloadAnimation(hand);
                 if (payload.result() != WeaponActionResult.RELOAD_COMPLETED) {
                     // Only a reload that ended early stops its audio; a completed reload's sound is allowed to ring out.
@@ -147,8 +151,10 @@ public final class WeaponReloadInput {
                 }
                 Constants.LOG.debug("[ARG] The reload in {} ended: {}", hand, payload.result());
             }
-            case APPLY_REFUSAL -> Constants.LOG.debug("[ARG] The reload request in {} was refused: {}", hand,
-                    payload.result());
+            case APPLY_REFUSAL -> {
+                ClientReloadSequence.cancel(hand);
+                Constants.LOG.debug("[ARG] The reload request in {} was refused: {}", hand, payload.result());
+            }
             case IGNORE -> Constants.LOG.debug("[ARG] Ignored a stale or duplicated reload outcome {} for {}",
                     payload.sequence(), hand);
             default -> {
@@ -178,5 +184,6 @@ public final class WeaponReloadInput {
      */
     public static void reset() {
         TRACKER.reset();
+        ClientReloadSequence.reset();
     }
 }

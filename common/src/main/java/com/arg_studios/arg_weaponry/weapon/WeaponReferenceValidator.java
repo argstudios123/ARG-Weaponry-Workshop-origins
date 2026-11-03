@@ -1,5 +1,6 @@
 package com.arg_studios.arg_weaponry.weapon;
 
+import com.arg_studios.arg_weaponry.client.display.SlotTextureId;
 import com.arg_studios.arg_weaponry.core.ValidationReport;
 import com.arg_studios.arg_weaponry.json.JsonValues;
 import com.arg_studios.arg_weaponry.json.JsoncReader;
@@ -8,6 +9,9 @@ import com.arg_studios.arg_weaponry.pack.ContentPackResources;
 import com.arg_studios.arg_weaponry.pack.PackResourceIndex;
 import com.arg_studios.arg_weaponry.weapon.ammo.AmmunitionEntries;
 import com.arg_studios.arg_weaponry.weapon.ammo.AmmunitionRegistry;
+import com.arg_studios.arg_weaponry.weapon.animation.ReusableAnimations;
+import com.arg_studios.arg_weaponry.weapon.animation.WeaponAnimationCache;
+import com.arg_studios.arg_weaponry.weapon.audio.WeaponSoundSet;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
@@ -62,9 +66,11 @@ public final class WeaponReferenceValidator {
         validateReusableAnimations();
         validateHudUi();
         validateAmmunition();
+        validateMuzzleFlash();
 
-        report.info(pack.id(), sourceName, "$", "Not resolved by this milestone: glowing-part bone names and "
-                + "sound playback");
+        report.info(pack.id(), sourceName, "$", "Not resolved by this milestone: sound playback. Glowing-part and "
+                + "muzzle-flash bone names are resolved against the parsed geometry when the weapon is first drawn, "
+                + "because only the model knows its bones; a name that matches no bone is reported there");
     }
 
     // --- display configuration ---
@@ -123,10 +129,35 @@ public final class WeaponReferenceValidator {
                     + "' has no 'animations' object, so animation names cannot be verified");
             return Set.of();
         }
-        return new LinkedHashSet<>(animationMap.keySet());
+        Set<String> names = new LinkedHashSet<>(animationMap.keySet());
+        // Reusable libraries contribute names to the same lookup, so a declared idle/fire clip that lives in a library must
+        // not be reported as missing. The placeholder primary only supplies the preferred namespace for bare paths.
+        ResourceId namespaceHint = new ResourceId(display.namespace(), "display");
+        for (ResourceId library : ReusableAnimations.resolveLibraries(pack, weapon, namespaceHint)) {
+            WeaponAnimationCache.instance().loadLibrary(pack, library)
+                    .ifPresent(file -> names.addAll(file.animations().keySet()));
+        }
+        return names;
     }
 
     // --- nested reference validation ---
+
+    /**
+     * The path a nested reference is looked up under inside its namespace.
+     *
+     * <p>Every reference is authored as the id Minecraft uses ({@code arg_pack:weapons/dmrs/m100_dmr/m100_dmr}), with one
+     * deliberate exception: {@code slot} is usually written the way the file appears in the pack
+     * ({@code arg_pack:textures/gui/hud/slots/m100_dmr.png}). The display loader accepts both spellings, because the icon
+     * genuinely comes from the second one, so the validator has to resolve the same id the loader will use - otherwise a pack
+     * whose icon works would still be told its icon is missing.</p>
+     *
+     * @param key  the display property being validated
+     * @param id   the parsed reference
+     * @return the path relative to the namespace
+     */
+    private String validatedPath(String key, ResourceId id) {
+        return "slot".equals(key) ? SlotTextureId.canonical(id).path() : id.path();
+    }
 
     /**
      * Validates one string reference inside the display configuration.
@@ -162,11 +193,12 @@ public final class WeaponReferenceValidator {
             return null;
         }
 
-        String found = index.findFirstExisting(reference.id().namespace(), prefix + reference.id().path(), suffixes);
+        String found = index.findFirstExisting(reference.id().namespace(),
+                prefix + validatedPath(key, reference.id()), suffixes);
         if (found == null) {
             report.warning(pack.id(), sourceName, pointer, "The " + description + " '" + reference.id()
                     + "' was not found; tried "
-                    + candidates(reference.id().namespace(), prefix + reference.id().path(), suffixes));
+                    + candidates(reference.id().namespace(), prefix + validatedPath(key, reference.id()), suffixes));
             return null;
         }
         if (index.isEmpty(reference.id().namespace(), found)) {
@@ -206,6 +238,10 @@ public final class WeaponReferenceValidator {
     }
 
     private void checkAnimation(String pointer, String animationName, Set<String> knownAnimations) {
+        if (animationName == null || animationName.isBlank()) {
+            // A reload stage may deliberately declare no clip: it is a timed beat, not an animation.
+            return;
+        }
         if (knownAnimations.contains(animationName)) {
             return;
         }
@@ -216,30 +252,51 @@ public final class WeaponReferenceValidator {
     // --- sounds, reusable animations and HUD ---
 
     private void validateSounds() {
-        for (Map.Entry<String, ResourceId> entry : weapon.sounds().entrySet()) {
-            ResourceId reference = entry.getValue();
-            String pointer = "$.sounds." + entry.getKey();
-            if (!pack.providesNamespace(reference.namespace())) {
-                report.warning(pack.id(), sourceName, pointer, "The sound reference '" + reference
-                        + "' uses namespace '" + reference.namespace()
-                        + "', which this content pack does not provide; it was not verified");
+        for (Map.Entry<String, WeaponSoundSet> entry : weapon.soundSets().entrySet()) {
+            String key = entry.getKey();
+            WeaponSoundSet set = entry.getValue();
+            if (set == null) {
                 continue;
             }
+            for (int index = 0; index < set.size(); index++) {
+                String pointer = "$.sounds." + key;
+                // A single-sample key keeps the original pointer; a key with several samples points at the one that is
+                // missing, so the creator knows which take to add.
+                if (set.size() > 1) {
+                    pointer = pointer + ".variants[" + index + "]";
+                }
+                validateSoundReference(pointer, set.variant(index));
+            }
+        }
+    }
 
-            String found = index.findFirstExisting(reference.namespace(), "sounds/" + reference.path(),
-                    ContentPackResources.SOUND_SUFFIXES);
-            if (found == null) {
-                report.warning(pack.id(), sourceName, pointer, "The sound file for '" + reference
-                        + "' was not found; tried "
-                        + candidates(reference.namespace(), "sounds/" + reference.path(),
-                        ContentPackResources.SOUND_SUFFIXES)
-                        + ". The sound key is kept; playback is not implemented by this milestone");
-                continue;
-            }
-            if (index.isEmpty(reference.namespace(), found)) {
-                report.warning(pack.id(), sourceName, pointer,
-                        "The sound file for '" + reference + "' is empty (" + found + ")");
-            }
+    /**
+     * Checks one declared sound identifier against the content pack's files.
+     *
+     * @param pointer   the JSON pointer of the entry
+     * @param reference the declared identifier
+     */
+    private void validateSoundReference(String pointer, ResourceId reference) {
+        if (!pack.providesNamespace(reference.namespace())) {
+            report.warning(pack.id(), sourceName, pointer, "The sound reference '" + reference
+                    + "' uses namespace '" + reference.namespace()
+                    + "', which this content pack does not provide; it was not verified");
+            return;
+        }
+
+        String found = index.findFirstExisting(reference.namespace(), "sounds/" + reference.path(),
+                ContentPackResources.SOUND_SUFFIXES);
+        if (found == null) {
+            report.warning(pack.id(), sourceName, pointer, "The sound file for '" + reference
+                    + "' was not found; tried "
+                    + candidates(reference.namespace(), "sounds/" + reference.path(),
+                    ContentPackResources.SOUND_SUFFIXES)
+                    + ". The sound key is kept; playback is not implemented by this milestone");
+            return;
+        }
+        if (index.isEmpty(reference.namespace(), found)) {
+            report.warning(pack.id(), sourceName, pointer,
+                    "The sound file for '" + reference + "' is empty (" + found + ")");
         }
     }
 
@@ -250,10 +307,9 @@ public final class WeaponReferenceValidator {
             String pointer = "$.reusable_default_animations[" + i + "]";
             if (!findInAnyNamespace(value)) {
                 report.warning(pack.id(), sourceName, pointer, "The reusable animation library '" + value
-                        + "' was not found as a pack-relative path in namespace(s) " + pack.resourceNamespaces()
-                        + " (tried <value>.json and <value>.animation.json). These entries carry no namespace in the "
-                        + "current schema, so the pack-relative lookup is a provisional convention that still needs a "
-                        + "decision");
+                        + "' was not found below default_animations/ in namespace(s) " + pack.resourceNamespaces()
+                        + " (tried <value> with .json and .animation.json). The entry is skipped; the weapon keeps "
+                        + "its own animations");
             }
         }
     }
@@ -344,6 +400,58 @@ public final class WeaponReferenceValidator {
             }
         }
         return false;
+    }
+
+    // --- muzzle flash ---
+
+    /**
+     * Verifies the sprite sheet of the optional {@code muzzle_flash} block.
+     *
+     * <p>The attachment bones cannot be checked here - they live in the geometry, which discovery does not parse - but the
+     * sprite sheet is an ordinary pack texture, so a wrong path is worth a warning at load time instead of a silent
+     * effect that never appears. Both spellings of a texture reference are resolved exactly like the renderer resolves
+     * them, so the validator and the texture cache cannot disagree about which file a reference names.</p>
+     */
+    private void validateMuzzleFlash() {
+        WeaponDefinition.MuzzleFlash flash = weapon.muzzleFlash();
+        if (flash == null) {
+            return;
+        }
+        if (!flash.enabled()) {
+            report.info(pack.id(), sourceName, "$.muzzle_flash.enabled",
+                    "The muzzle flash is disabled, so nothing is rendered for it");
+            return;
+        }
+        ResourceId texture = flash.texture();
+        if (texture == null) {
+            // The parser already reported the missing or malformed reference; the flash is disabled because of it.
+            return;
+        }
+        if (!pack.providesNamespace(texture.namespace())) {
+            report.warning(pack.id(), sourceName, "$.muzzle_flash.texture", "The muzzle flash texture '" + texture
+                    + "' uses namespace '" + texture.namespace() + "', which this content pack does not provide; it was "
+                    + "not verified");
+            return;
+        }
+
+        ResourceId canonical = ContentPackResources.stripTextureSuffix(texture);
+        String relativePath = "textures/" + (canonical == null ? texture.path() : canonical.path());
+        String found = index.findFirstExisting(texture.namespace(), relativePath,
+                ContentPackResources.TEXTURE_SUFFIXES);
+        if (found == null) {
+            report.warning(pack.id(), sourceName, "$.muzzle_flash.texture", "The muzzle flash texture '" + texture
+                    + "' was not found; tried " + candidates(texture.namespace(), relativePath,
+                    ContentPackResources.TEXTURE_SUFFIXES));
+            return;
+        }
+        if (index.isEmpty(texture.namespace(), found)) {
+            report.warning(pack.id(), sourceName, "$.muzzle_flash.texture", "The muzzle flash texture '" + texture
+                    + "' resolves to an empty file (" + found + ")");
+            return;
+        }
+        report.info(pack.id(), sourceName, "$.muzzle_flash.texture", "The muzzle flash sprite sheet '" + texture
+                + "' resolves to the pack file '" + found + "'; its frames are derived from the image size when it is "
+                + "first drawn");
     }
 
     // --- helpers ---

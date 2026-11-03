@@ -20,6 +20,9 @@
         ],
         "client": [
             "com.arg_studios.arg_weaponry.fabric.ArgWeaponryFabricClient"
+        ],
+        "modmenu": [
+            "com.arg_studios.arg_weaponry.fabric.ModMenuIntegration"
         ]
     },
     "mixins": [
@@ -34,7 +37,7 @@
         "architectury": ">=${architectury_version}"
     },
     "suggests": {
-        "another-mod": "*"
+        "modmenu": "*"
     }
 }
   

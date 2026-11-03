@@ -35,10 +35,13 @@ package com.arg_studios.arg_weaponry.weapon.model;
  * {@code (-a, b, -c)} reproduces the reference muzzle direction, feeding {@code (a, b, c)} does not.</p>
  *
  * <h2>Scope</h2>
- * <p>This applies to <em>every</em> Bedrock rotation this renderer composes - a bone's authored rest rotation, its
- * animated rotation, and the rotations of the {@code default_view} anchor chain - because they were all authored in
- * the same space. Positions, pivots and scale factors are unaffected: positions already go through {@code M}, and a
- * uniform per-axis scale is unchanged by a reflection.</p>
+ * <p>This applies to <em>every</em> Bedrock rotation this renderer composes - the sum of a bone's authored rest rotation and
+ * its animated rotation, the rotations of the {@code default_view} anchor chain, and a <strong>cube's own
+ * {@code rotation}</strong>, which {@link BedrockGeometryParser} converts here before it bakes the rotation into the
+ * vertices - because they were all authored in the same space. Positions, pivots and scale factors are unaffected:
+ * positions already go through {@code M}, and a uniform per-axis scale is unchanged by a reflection. The animated and
+ * authored Euler triples are added before this conversion, exactly as Blockbench adds them before it builds its matrix;
+ * the conversion is component-wise linear, so the order of those two operations cannot change the result.</p>
  */
 public final class RotationConvention {
 

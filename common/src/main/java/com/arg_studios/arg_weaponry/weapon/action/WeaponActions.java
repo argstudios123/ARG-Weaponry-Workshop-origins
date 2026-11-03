@@ -2,6 +2,8 @@ package com.arg_studios.arg_weaponry.weapon.action;
 
 import com.arg_studios.arg_weaponry.item.WeaponItem;
 import com.arg_studios.arg_weaponry.weapon.AmmoCapacity;
+import com.arg_studios.arg_weaponry.weapon.ammo.AmmunitionRegistry;
+import com.arg_studios.arg_weaponry.weapon.ammo.CreativeAmmunition;
 import com.arg_studios.arg_weaponry.weapon.ammo.ReserveAmmunition;
 import com.arg_studios.arg_weaponry.weapon.state.WeaponState;
 import net.minecraft.server.level.ServerPlayer;
@@ -76,7 +78,8 @@ public final class WeaponActions {
             return WeaponActionResult.NOT_A_WEAPON;
         }
         WeaponState state = weapon.state(stack);
-        return WeaponActionRules.validateFire(weapon.ammoCapacity(), state, weapon.definition().firingModes());
+        return WeaponActionRules.validateFire(weapon.ammoCapacity(), state, weapon.definition().firingModes(),
+                weapon.definition().allowFiringWhenSprinting(), player.isSprinting());
     }
 
     /**
@@ -112,7 +115,12 @@ public final class WeaponActions {
             return WeaponActionRules.validateReload(capacity, state, 0);
         }
         int reserve = ReserveAmmunition.available(player, weapon.definition());
-        return WeaponActionRules.validateReload(capacity, state, reserve);
+        // The same Creative supply the reload service uses, so the pre-check and the real transfer cannot disagree.
+        boolean creativeSupply = CreativeAmmunition.grantsUnlimited(player.hasInfiniteMaterials(),
+                AmmunitionRegistry.declaresCreativeFallback(weapon.definition()));
+        int effectiveReserve = CreativeAmmunition.reserveFor(reserve, capacity == null ? 0 : capacity.rounds(),
+                creativeSupply);
+        return WeaponActionRules.validateReload(capacity, state, effectiveReserve);
     }
 
     /**

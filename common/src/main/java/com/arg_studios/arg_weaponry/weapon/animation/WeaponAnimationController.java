@@ -57,8 +57,23 @@ public final class WeaponAnimationController {
     private double cachedPoseTime = Double.NaN;
     private boolean paused;
 
+    /**
+     * The rate the current clip's clock advances at, i.e. how many seconds of animation one second of real time covers.
+     *
+     * <p>This is the other half of {@link #tick(double, double)}: the tick advances {@code elapsedSeconds} by
+     * {@code delta * rate}, so {@link #poseAt(double)} has to move through the clip by {@code offset * rate} as well.
+     * Without it the frames inside one tick advance the pose at a different speed than the tick boundary does, and every
+     * boundary becomes a visible step - which is exactly the artefact a non-unit reload or inspection rate used to
+     * produce.</p>
+     */
+    private double playbackRate = 1.0;
+
     /** Largest sub-tick offset {@link #poseAt(double)} will sample outside the current playback time. */
     private static final double MAX_SAMPLE_OFFSET_SECONDS = 0.1;
+
+    /** Range a requested playback rate is clamped into, so a misconfigured duration cannot stop or skip a clip. */
+    private static final double MIN_PLAYBACK_RATE = 0.01;
+    private static final double MAX_PLAYBACK_RATE = 100.0;
 
     /**
      * Starts an animation from the beginning, replacing whatever was playing.
@@ -119,6 +134,36 @@ public final class WeaponAnimationController {
      * @param loopOverride  the looping policy to use, or {@code null} to respect the animation
      * @return {@code true} when playback started
      */
+    /**
+     * Starts playing one named animation of an already-merged animation document.
+     *
+     * <p>This is the reusable-animation entry point: the caller resolves the weapon's merged set once (own document plus
+     * its reusable libraries) and any clip name can then come from either source. The resource-based
+     * {@link #play(ContentPack, ResourceId, String, LoopMode)} remains for the development tools and callers that only
+     * know one document.</p>
+     *
+     * @param file         the merged document, may be {@code null}
+     * @param animationName the animation name exactly as written
+     * @param loopOverride  an explicit loop policy, or {@code null} to use the animation's own
+     * @return {@code true} when playback started
+     */
+    public synchronized boolean play(AnimationFile file, String animationName, LoopMode loopOverride) {
+        if (file == null || animationName == null || animationName.isBlank()) {
+            return false;
+        }
+        BedrockAnimation animation = file.animation(animationName);
+        return animation != null && play(animation, loopOverride);
+    }
+
+    /**
+     * Starts playing one animation through the cache.
+     *
+     * @param pack          the owning content pack
+     * @param resource      the animation resource identifier
+     * @param animationName the animation name exactly as written
+     * @param loopOverride  an explicit loop policy, or {@code null} to use the animation's own
+     * @return {@code true} when playback started
+     */
     public boolean play(ContentPack pack, ResourceId resource, String animationName, LoopMode loopOverride) {
         if (pack == null || resource == null || animationName == null || animationName.isBlank()) {
             return false;
@@ -129,12 +174,32 @@ public final class WeaponAnimationController {
     }
 
     /**
-     * Advances playback by an explicit delta.
+     * Advances playback by an explicit delta at the clip's own speed.
      *
      * @param deltaSeconds the elapsed time in seconds; zero, negative, {@code NaN} and infinite values are
      *                     ignored
      */
     public synchronized void tick(double deltaSeconds) {
+        tick(deltaSeconds, 1.0);
+    }
+
+    /**
+     * Advances playback by an explicit delta at a given playback rate.
+     *
+     * <p>The rate is remembered, because it is half of the controller's time base: this method moves the clip's clock by
+     * {@code delta * rate}, and {@link #poseAt(double)} moves the sampled time by {@code offset * rate} for exactly the same
+     * reason. A caller therefore passes the tick length and the rate separately instead of pre-multiplying, which is what
+     * keeps the frames inside one tick and the tick boundary itself on one continuous timeline.</p>
+     *
+     * <p>The rate is stored even when nothing is playing, so a controller that is resumed or restarted keeps interpolating
+     * with the rate its owner asked for.</p>
+     *
+     * @param deltaSeconds the elapsed time in seconds; zero, negative, {@code NaN} and infinite values are ignored
+     * @param rate         how many seconds of animation one second of real time covers; clamped to a usable range,
+     *                     {@code 0} and non-finite values mean {@code 1}
+     */
+    public synchronized void tick(double deltaSeconds, double rate) {
+        this.playbackRate = clampRate(rate);
         if (!playing || paused || animation == null) {
             return;
         }
@@ -142,13 +207,14 @@ public final class WeaponAnimationController {
             return;
         }
 
+        double step = deltaSeconds * this.playbackRate;
         double length = animation.lengthSeconds();
         if (effectiveLoopMode() == LoopMode.LOOP) {
             if (!(length > 0.0)) {
                 elapsedSeconds = 0.0;
                 return;
             }
-            double wrapped = (elapsedSeconds + deltaSeconds) % length;
+            double wrapped = (elapsedSeconds + step) % length;
             if (wrapped < 0.0 || wrapped >= length || !Double.isFinite(wrapped)) {
                 wrapped = 0.0;
             }
@@ -157,13 +223,24 @@ public final class WeaponAnimationController {
             return;
         }
 
-        elapsedSeconds = Math.min(elapsedSeconds + deltaSeconds, length);
+        elapsedSeconds = Math.min(elapsedSeconds + step, length);
         if (elapsedSeconds >= length) {
             elapsedSeconds = length;
             playing = false;
             finished = true;
         }
         invalidatePose();
+    }
+
+    /**
+     * @param rate a requested playback rate
+     * @return the rate clamped into the controller's usable range, {@code 1} for an unusable value
+     */
+    private static double clampRate(double rate) {
+        if (!Double.isFinite(rate) || rate <= 0.0) {
+            return 1.0;
+        }
+        return Math.max(MIN_PLAYBACK_RATE, Math.min(MAX_PLAYBACK_RATE, rate));
     }
 
     /**
@@ -194,9 +271,15 @@ public final class WeaponAnimationController {
      * advance - and this is the sampling entry point: it evaluates the same animation at {@code elapsed + offset}, which
      * is what a partial-tick interpolation needs to stay smooth at more than twenty frames per second.</p>
      *
-     * <p>The offset is clamped to one tick in each direction, so a caller cannot sample far outside the current state.
-     * A looping animation wraps the sample time exactly like {@link #tick(double)} does; a one-shot animation clamps it
-     * to its own length.</p>
+     * <p>The offset is scaled by the clip's {@linkplain #playbackRate() playback rate}, because that is the rate the tick
+     * clock advances at: a clip playing at twice the speed covers twice the animation time in the same real time, so one
+     * partial tick has to sample twice as far. Sampling it unscaled makes the pose advance at one speed inside a tick and
+     * jump at every tick boundary - a step that is proportional to {@code |rate - 1|} and invisible to a test that only
+     * looks at tick boundaries.</p>
+     *
+     * <p>The offset is clamped to one tick in each direction before it is scaled, so a caller cannot sample far outside the
+     * current state. A looping animation wraps the sample time exactly like {@link #tick(double)} does; a one-shot animation
+     * clamps it to its own length.</p>
      *
      * @param offsetSeconds the sub-tick offset in seconds; non-finite values are treated as zero
      * @return the sampled pose, or {@link WeaponPose#NONE} when nothing is playing
@@ -208,7 +291,8 @@ public final class WeaponAnimationController {
         if (!Double.isFinite(offsetSeconds) || offsetSeconds == 0.0) {
             return currentPose();
         }
-        double offset = Math.max(-MAX_SAMPLE_OFFSET_SECONDS, Math.min(MAX_SAMPLE_OFFSET_SECONDS, offsetSeconds));
+        double offset = Math.max(-MAX_SAMPLE_OFFSET_SECONDS, Math.min(MAX_SAMPLE_OFFSET_SECONDS, offsetSeconds))
+                * playbackRate;
         double length = animation.lengthSeconds();
         double time = elapsedSeconds + offset;
         if (effectiveLoopMode() == LoopMode.LOOP && length > 0.0) {
@@ -229,6 +313,9 @@ public final class WeaponAnimationController {
         playing = false;
         finished = false;
         paused = false;
+        // A rate belongs to the clip that played at it; the next clip starts at its authored speed until its owner asks
+        // for something else.
+        playbackRate = 1.0;
         invalidatePose();
     }
 
@@ -297,6 +384,14 @@ public final class WeaponAnimationController {
     /** @return the playback time in seconds, never negative; a finished animation reports its length. */
     public synchronized double elapsedSeconds() {
         return elapsedSeconds;
+    }
+
+    /**
+     * @return the rate the clip's clock advances at: {@code 1} is the authored speed, {@code 2} plays twice as fast. The
+     *         render-time sampling entry point {@link #poseAt(double)} scales its offset by the same value.
+     */
+    public synchronized double playbackRate() {
+        return playbackRate;
     }
 
     /** @return the duration of the animation being played, or {@code 0} when idle. */

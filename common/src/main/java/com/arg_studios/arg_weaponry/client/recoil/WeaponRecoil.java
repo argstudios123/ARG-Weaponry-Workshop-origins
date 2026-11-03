@@ -79,7 +79,8 @@ public final class WeaponRecoil {
      * <p>The camera impulse is scaled by the stance the player is actually in when the shot is accepted:
      * {@code aim_multiplier} while aiming (the client's aim transition is active, i.e. {@link WeaponAiming#isAiming()})
      * and {@code crouch_multiplier} while crouching ({@link LocalPlayer#isCrouching()}). The two multiply when both
-     * hold. The weapon-model kickback is <em>not</em> scaled: it keeps the amplitude the pack configured.</p>
+     * hold. The weapon-model kickback is scaled only by {@code kickback_aiming_modifier} while aiming, through
+     * {@link RecoilProfile#kickbackBlocks(boolean)}, and never by either camera multiplier.</p>
      *
      * @param hand the hand that fired
      */
@@ -99,16 +100,20 @@ public final class WeaponRecoil {
         }
         ownerItemId = String.valueOf(BuiltInRegistries.ITEM.getKey(item));
 
+        // The stance the shot was accepted in is read once and drives both layers. The camera impulse uses aim/crouch
+        // multipliers; the weapon-model kickback uses only `kickback_aiming_modifier`, so the two never multiply into
+        // each other and a weapon can tune one without changing the other.
+        boolean aiming = WeaponAiming.isAiming();
+        boolean crouching = player.isCrouching();
+
         // Layer A: the weapon's own kickback. Only registered when the weapon explicitly configures it, so a weapon that
-        // omits `kickback_recoil_amplitude` (or sets it to 0) is exactly as if this layer did not exist. The stance
-        // multipliers below deliberately do not reach this layer.
-        KICKBACK.shot(profile);
+        // omits `kickback_recoil_amplitude` (or sets it to 0) is exactly as if this layer did not exist. The profile
+        // applies `kickback_aiming_modifier` once, inside `kickbackBlocks(aiming)`.
+        KICKBACK.shot(profile, aiming);
 
         // Layer B: the player's aim. The direction of the horizontal part is chosen here, once per shot, so the impulse
         // is a fixed value from this moment on; aim_multiplier / crouch_multiplier scale that impulse now, from the stance
         // the player is actually in, and nothing else about the shot is affected.
-        boolean aiming = WeaponAiming.isAiming();
-        boolean crouching = player.isCrouching();
         VIEW.onShot(profile.viewRecoilImpulse(RANDOM, aiming, crouching));
     }
 

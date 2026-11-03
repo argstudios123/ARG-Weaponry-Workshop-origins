@@ -3,6 +3,7 @@ package com.arg_studios.arg_weaponry.client.animation;
 import com.arg_studios.arg_weaponry.client.camera.FirstPersonCamera;
 import com.arg_studios.arg_weaponry.item.WeaponItem;
 import com.arg_studios.arg_weaponry.weapon.animation.WeaponPose;
+import com.arg_studios.arg_weaponry.weapon.reload.ReloadRules;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
@@ -52,6 +53,11 @@ public final class WeaponViewControllers {
      * @return the pose, or {@code null} when the main hand draws no weapon pose
      */
     public synchronized WeaponPose mainHandPoseForFrame(float partialTick) {
+        // The camera hook runs before the first-person pass, so it is often the first code to sample a pose in a frame. A
+        // slot change that arrived between two ticks must therefore be observed here as well, or the camera would ask the
+        // registry to adopt the live stack (creating an idle clip that was never drawn) before the state machine could start
+        // the draw. The observation is idempotent: the second call in the same frame sees no change.
+        WeaponHandoffManager.instance().beforeFirstPersonFrame();
         return poseFor(InteractionHand.MAIN_HAND, partialTick);
     }
 
@@ -65,7 +71,10 @@ public final class WeaponViewControllers {
      */
     public synchronized void tickHeldWeapons() {
         Minecraft minecraft = Minecraft.getInstance();
-        WeaponHandoffManager.instance().clientTick(minecraft);
+        // The sprint restriction and the animation-side suppression read the same intent rule: a held aim during a
+        // temporary refusal (reload, inspect, draw) must not let a run clip play even though normal ADS is paused.
+        WeaponHandoffManager.instance().clientTick(minecraft,
+                com.arg_studios.arg_weaponry.client.aiming.WeaponAiming.blocksSprint());
         LocalPlayer player = minecraft.player;
         if (player == null) {
             FirstPersonCamera.clear();
@@ -101,9 +110,28 @@ public final class WeaponViewControllers {
      * @return {@code true} when a reload animation started
      */
     public synchronized boolean playReloadAnimation(InteractionHand hand, String animation, double durationSeconds) {
+        return playReloadAnimation(hand, animation, durationSeconds,
+                ReloadRules.DEFAULT_TRANSITION_SECONDS);
+    }
+
+    /**
+     * Starts one staged reload clip at the cross-fade length the entry declared.
+     *
+     * <p>The fade is a render-side detail: it overlaps the clip that is starting, so the clip still begins at the moment
+     * the server scheduled and no insertion, iteration or completion moves by a millisecond.</p>
+     *
+     * @param hand              the hand the reload belongs to
+     * @param animation         the declared reload animation
+     * @param durationSeconds   the server-side duration of this clip
+     * @param transitionSeconds the cross-fade into it, {@code 0} to switch without blending
+     * @return {@code true} when a reload animation started
+     */
+    public synchronized boolean playReloadAnimation(InteractionHand hand, String animation, double durationSeconds,
+                                                    double transitionSeconds) {
         VisualWeapon weapon = VisualWeapons.instance().active(hand);
         return weapon != null
-                && weapon.animator().playReload(weapon.pack(), weapon.definition(), animation, durationSeconds);
+                && weapon.animator().playReload(weapon.pack(), weapon.definition(), animation, durationSeconds,
+                        transitionSeconds);
     }
 
     /**

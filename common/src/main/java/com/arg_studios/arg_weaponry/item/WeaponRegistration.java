@@ -3,6 +3,7 @@ package com.arg_studios.arg_weaponry.item;
 import com.arg_studios.arg_weaponry.Constants;
 import com.arg_studios.arg_weaponry.core.ValidationReport;
 import com.arg_studios.arg_weaponry.pack.ContentPack;
+import com.arg_studios.arg_weaponry.platform.Services;
 import com.arg_studios.arg_weaponry.weapon.ResourceId;
 import com.arg_studios.arg_weaponry.weapon.WeaponRegistrationPlan;
 import com.arg_studios.arg_weaponry.weapon.state.WeaponComponents;
@@ -142,11 +143,11 @@ public final class WeaponRegistration {
 
             // Contents are added by the loader modules: vanilla 26.3 makes CreativeModeTab.Output
             // protected, so a content generator cannot be implemented from common code. NeoForge makes
-            // it public and Fabric provides its own entry-modification API.
-            CreativeModeTab tab = CreativeModeTab.builder(CreativeModeTab.Row.BOTTOM, column % TAB_COLUMNS)
-                    .title(title(tabPlan.pack()))
-                    .icon(icon)
-                    .build();
+            // it public and Fabric provides its own entry-modification API. The tab itself is built by
+            // the platform helper because the supported builder differs between the loaders (see
+            // IPlatformHelper#createCreativeTab).
+            CreativeModeTab tab = Services.PLATFORM
+                    .createCreativeTab(title(tabPlan.pack()), icon, column % TAB_COLUMNS);
 
             try {
                 Registry.register(BuiltInRegistries.CREATIVE_MODE_TAB,
@@ -238,16 +239,27 @@ public final class WeaponRegistration {
     }
 
     /**
-     * Uses the pack's {@code pack_name} as the tab title when it reads like a display name, otherwise
-     * the pack id. Content-pack language loading does not exist yet, so a translation key would be
-     * shown verbatim and is avoided here.
+     * Builds the creative tab title.
+     *
+     * <p>A pack's {@code pack_name} is either a display name or a translation key. A translation key is now usable: the pack
+     * is mounted as a resource pack, so its own {@code assets/<namespace>/lang/en_us.json} reaches Minecraft's language
+     * manager, and {@code ContentPackClientPack} additionally serves a generated document with a readable fallback for every
+     * registered item and for this key. The previous rule - never emit a key, because pack languages were not loaded - made
+     * the shipped pack show its folder id ({@code arg_default_pack}) instead of a name.</p>
+     *
+     * @param pack the content pack the tab belongs to
+     * @return the title component, never {@code null}
      */
     private static Component title(ContentPack pack) {
         String name = pack.metadata().nameKey();
-        if (name != null && !name.isBlank() && !looksLikeTranslationKey(name)) {
+        if (name != null && !name.isBlank()) {
+            if (looksLikeTranslationKey(name)) {
+                return Component.translatable(name);
+            }
             return Component.literal(name);
         }
-        return Component.literal(pack.id());
+        // No declared name at all: a readable name derived from the pack id, never the raw folder id.
+        return Component.literal(ItemDisplayName.humanize(pack.id()));
     }
 
     private static boolean looksLikeTranslationKey(String value) {

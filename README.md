@@ -22,6 +22,26 @@ When using this template the majority of your mod should be developed in the `co
 
 Loader specific projects such as the `fabric` and `neoforge` project are used to load the `common` project into the game. These projects also define code that is specific to that loader. Loader specific projects can access all the code in the `common` project. It is important to remember that the `common` project can not access code from loader specific projects.
 
+## Building the distributions
+
+Three root-level Gradle commands build one distribution each. They reuse the modules' normal `jar` tasks, so the archives
+carry exactly the metadata, shared resources and content packs a regular build produces; no second packaging pipeline
+exists. The files are collected in `build/distributions/`.
+
+| Command | Output | Contents |
+| --- | --- | --- |
+| `./gradlew buildFabricJar` | `arg_weaponry-fabric-<minecraft>-<version>.jar` | The Fabric implementation and `fabric.mod.json`. NeoForge classes and metadata are not built or packaged. |
+| `./gradlew buildNeoForgeJar` | `arg_weaponry-neoforge-<minecraft>-<version>.jar` | The NeoForge implementation and `META-INF/neoforge.mods.toml`. Fabric classes and metadata are not built or packaged. |
+| `./gradlew buildUniversalJar` | `arg_weaponry-universal-<minecraft>-<version>.jar` | Both implementations and both loaders' metadata, with one merged copy of the common classes/resources. |
+
+`buildFabricJar` and `buildNeoForgeJar` depend only on the matching module, so building one loader never packages the
+other. `buildUniversalJar` depends on both loader jars and merges them; the conflicting service-provider files are merged
+into one list and `Services` selects the provider that belongs to the loader that is actually running. The existing
+`./gradlew build` and the module-specific tasks (`:fabric:build`, `:neoforge:build`, …) are unchanged.
+
+Run the shared unit tests with `./gradlew :common:test`.
+
+
 ## Removing Platforms and Loaders
 While this template has support for many modloaders, new loaders may appear in the future, and existing loaders may become less relevant.
 

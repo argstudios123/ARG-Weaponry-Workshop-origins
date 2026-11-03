@@ -51,14 +51,14 @@ class WeaponHandoffControllerTest {
         assertEquals(HandoffStage.HOLSTERING, controller.stage());
         assertEquals(List.of(1), env.switchStarted, "the server is told once that a switch started");
         assertEquals(List.of(), env.committedSlots, "the slot must not change while the outgoing weapon is still drawn");
-        assertEquals(RIFLE_A, visuals.activeIdentity(), "the outgoing weapon stays the visual weapon");
+        assertEquals(RIFLE_A, visuals.visualIdentity(), "the outgoing weapon stays the visual weapon");
 
         visuals.finishHolster();
         controller.tick();
 
         assertEquals(HandoffStage.DRAWING, controller.stage());
         assertEquals(List.of(1), env.committedSlots, "exactly one slot commit, at the boundary");
-        assertEquals(RIFLE_B, visuals.activeIdentity(), "the incoming weapon became the visual weapon");
+        assertEquals(RIFLE_B, visuals.visualIdentity(), "the incoming weapon became the visual weapon");
 
         int adopted = visuals.calls.indexOf("adopt:" + RIFLE_B.itemId() + "@" + RIFLE_B.slot());
         int drawn = visuals.calls.indexOf("draw");
@@ -94,12 +94,12 @@ class WeaponHandoffControllerTest {
         assertEquals(1, visuals.holsterStarts, "the holster clip is not restarted by a new request");
         assertEquals(3, controller.session().targetSlot());
         assertEquals(List.of(1, 2, 3), env.switchStarted, "the server is told about every destination");
-        assertEquals(RIFLE_A, visuals.activeIdentity(), "and the outgoing weapon is still the one drawn");
+        assertEquals(RIFLE_A, visuals.visualIdentity(), "and the outgoing weapon is still the one drawn");
 
         visuals.finishHolster();
         controller.tick();
 
-        assertEquals(PISTOL_D, visuals.activeIdentity(), "only the last requested destination is adopted");
+        assertEquals(PISTOL_D, visuals.visualIdentity(), "only the last requested destination is adopted");
         assertEquals(List.of(3), env.committedSlots, "and it is committed exactly once");
     }
 
@@ -111,7 +111,7 @@ class WeaponHandoffControllerTest {
         assertEquals(HandoffStage.IDLE, controller.stage());
         assertEquals(1, visuals.stopHolsterCalls, "the holster clip is stopped");
         assertEquals(1, env.switchCancelled, "the server is told the switch was abandoned");
-        assertEquals(RIFLE_A, visuals.activeIdentity(), "the weapon stays the visual weapon");
+        assertEquals(RIFLE_A, visuals.visualIdentity(), "the weapon stays the visual weapon");
         assertEquals(List.of(), env.committedSlots, "and nothing is committed");
     }
 
@@ -125,12 +125,12 @@ class WeaponHandoffControllerTest {
         assertTrue(controller.requestSwitch(2));
         assertEquals(HandoffStage.HOLSTERING, controller.stage());
         assertEquals(2, visuals.holsterStarts, "a fresh holster starts on the weapon that was being drawn");
-        assertEquals(RIFLE_B, visuals.activeIdentity(), "and that weapon is still the visual one");
+        assertEquals(RIFLE_B, visuals.visualIdentity(), "and that weapon is still the visual one");
         assertEquals(RIFLE_B, controller.session().outgoing());
 
         visuals.finishHolster();
         controller.tick();
-        assertEquals(SHOTGUN_C, visuals.activeIdentity());
+        assertEquals(SHOTGUN_C, visuals.visualIdentity());
         assertEquals(List.of(1, 2), env.committedSlots, "one commit per completed transition");
     }
 
@@ -142,7 +142,7 @@ class WeaponHandoffControllerTest {
 
         assertFalse(controller.requestSwitch(1), "pressing the slot that is already being drawn needs no deferral");
         assertEquals(HandoffStage.DRAWING, controller.stage());
-        assertEquals(RIFLE_B, visuals.activeIdentity());
+        assertEquals(RIFLE_B, visuals.visualIdentity());
     }
 
     // ---------------------------------------------------------------- missing clips and empty destinations
@@ -152,7 +152,7 @@ class WeaponHandoffControllerTest {
         visuals.holsterClipSeconds = 0.0;
         assertTrue(controller.requestSwitch(1));
 
-        assertEquals(RIFLE_B, visuals.activeIdentity(), "there is no clip to wait for, so the boundary is immediate");
+        assertEquals(RIFLE_B, visuals.visualIdentity(), "there is no clip to wait for, so the boundary is immediate");
         assertEquals(List.of(1), env.committedSlots);
         assertEquals(0, visuals.holsterStarts);
     }
@@ -165,7 +165,7 @@ class WeaponHandoffControllerTest {
         controller.tick();
 
         assertEquals(HandoffStage.IDLE, controller.stage(), "nothing is left running");
-        assertEquals(RIFLE_B, visuals.activeIdentity());
+        assertEquals(RIFLE_B, visuals.visualIdentity());
         assertEquals(0, visuals.drawStarts);
         assertEquals(0, visuals.settleDrawCalls);
     }
@@ -178,12 +178,236 @@ class WeaponHandoffControllerTest {
         controller.tick();
 
         assertEquals(HandoffStage.IDLE, controller.stage());
-        assertEquals(WeaponIdentity.NONE, visuals.activeIdentity(), "rendering falls back to the live hand");
+        assertEquals(WeaponIdentity.NONE, visuals.visualIdentity(), "rendering falls back to the live hand");
         assertEquals(WeaponIdentity.NONE, visuals.adoptions.get(visuals.adoptions.size() - 1),
                 "the outgoing weapon was retired by adopting the empty hand");
     }
 
-    // ---------------------------------------------------------------- recovery, deadlines, stale state
+    // ---------------------------------------------------------------- drawing a weapon with nothing to holster
+
+    /**
+     * The case the handoff-only implementation lost: the selection moves onto a weapon while nothing is drawn, so there is
+     * no holster half and the weapon must still be raised with its draw clip instead of appearing in its idle pose.
+     */
+    @Test
+    void aWeaponThatBecomesHeldWithNothingDrawnPlaysItsDraw() {
+        controller.reset();
+        controller.tick();
+        assertEquals(HandoffStage.IDLE, controller.stage(), "the first look at the hand is not a draw");
+
+        // The selection moves to another weapon by a path the input interception did not see; vanilla applied it already.
+        env.selectedSlot = 1;
+        controller.tick();
+
+        assertEquals(HandoffStage.DRAWING, controller.stage(), "the weapon that became held is drawn");
+        assertEquals(RIFLE_B, visuals.visualIdentity(), "and it is the adopted visual weapon");
+        assertEquals(1, visuals.drawStarts, "its draw clip plays");
+        assertEquals(RIFLE_B, visuals.drawOwner(), "on the weapon that was just adopted");
+        assertEquals(0, visuals.holsterStarts, "there is nothing to holster");
+        assertEquals(List.of(), env.committedSlots, "the slot was already applied, so nothing is committed again");
+        assertEquals(List.of(), env.switchStarted, "and the server is not told about a delayed switch");
+
+        visuals.finishDraw();
+        controller.tick();
+
+        assertEquals(HandoffStage.IDLE, controller.stage());
+        assertEquals(1, visuals.settleDrawCalls, "the draw hands the weapon back to its idle playback");
+    }
+
+    @Test
+    void aDrawWithoutAHolsterBlocksActionsForTheLengthOfItsClip() {
+        controller.reset();
+        controller.tick();
+        env.selectedSlot = 1;
+        controller.tick();
+        assertTrue(controller.isTransitioning(), "the draw owns the hand while it plays");
+
+        visuals.finishDraw();
+        controller.tick();
+        assertFalse(controller.isTransitioning(), "and releases it when it ends");
+    }
+
+    @Test
+    void theFirstTickAfterAResetOnlyObservesTheSelection() {
+        controller.reset();
+        controller.tick();
+
+        assertEquals(HandoffStage.IDLE, controller.stage(), "a weapon already in the hand is not a draw");
+        assertEquals(0, visuals.drawStarts);
+        assertEquals(0, visuals.adoptions.size(), "and nothing is adopted or re-adopted by the observation");
+    }
+
+    @Test
+    void aWeaponWithoutADrawClipThatBecomesHeldIsAdoptedWithoutASession() {
+        visuals.drawClipSeconds = 0.0;
+        controller.reset();
+        controller.tick();
+        env.selectedSlot = 1;
+        controller.tick();
+
+        assertEquals(RIFLE_B, visuals.visualIdentity(), "the weapon is drawn in its idle playback");
+        assertEquals(HandoffStage.IDLE, controller.stage(), "with no clip, nothing is left running");
+        assertEquals(0, visuals.drawStarts);
+    }
+
+    @Test
+    void aSwitchOntoANonWeaponSlotDoesNotStartADraw() {
+        controller.reset();
+        controller.tick();
+        // Slot 4 holds nothing at all.
+        env.selectedSlot = 4;
+        controller.tick();
+
+        assertEquals(HandoffStage.IDLE, controller.stage());
+        assertEquals(WeaponIdentity.NONE, visuals.visualIdentity());
+        assertEquals(0, visuals.drawStarts);
+    }
+
+    /**
+     * A request that has nothing to holster is left to vanilla - the switch itself must stay instant - and the draw of the
+     * weapon it selects is started by the tick that follows, so it begins on the same client tick as the input.
+     */
+    @Test
+    void aSwitchRequestWithNothingDrawnIsAppliedByVanillaAndDrawnByTheTick() {
+        controller.reset();
+        controller.tick();
+
+        assertFalse(controller.requestSwitch(1), "there is nothing to hide, so vanilla applies the switch");
+        assertEquals(List.of(), env.switchStarted);
+
+        // Vanilla applies the slot during the same client tick, and the controller's tick runs after it.
+        env.selectedSlot = 1;
+        controller.tick();
+
+        assertEquals(HandoffStage.DRAWING, controller.stage());
+        assertEquals(RIFLE_B, visuals.visualIdentity());
+        assertEquals(1, visuals.drawStarts);
+    }
+
+    /**
+     * A scroll applies the slot change between two ticks, so the very next rendered frame can reach the visual registry
+     * before the controller's tick does. The weapon is then already the drawn one and must still be raised - on the
+     * animator that is on screen, so the draw cross-fades in instead of the weapon simply sitting in its idle clip.
+     */
+    @Test
+    void aWeaponAFrameAdoptedBeforeTheTickIsStillRaised() {
+        controller.reset();
+        controller.tick();
+
+        // The frame after the switch adopted the incoming weapon before the tick could see the change.
+        visuals.adopt(RIFLE_B);
+        env.selectedSlot = 1;
+        controller.tick();
+
+        assertEquals(HandoffStage.DRAWING, controller.stage(), "the weapon that became held is raised");
+        assertEquals(1, visuals.drawStarts);
+        assertEquals(RIFLE_B, visuals.drawOwner(), "the clip starts on the weapon that is already drawn");
+        assertEquals(1, visuals.adoptions.size(), "and that weapon is not adopted a second time");
+    }
+
+    @Test
+    void aHolsterWhoseWeaponIsGoneCommitsInsteadOfWaitingForTheDeadline() {
+        assertTrue(controller.requestSwitch(1));
+        assertEquals(HandoffStage.HOLSTERING, controller.stage());
+
+        // The renderer released the visual weapon - the stack left the hand - so its holster clip can never report the end
+        // of the transition that would normally commit the switch.
+        visuals.release();
+        controller.tick();
+
+        assertEquals(List.of(1), env.committedSlots, "the waiting switch is applied at once");
+        assertEquals(HandoffStage.DRAWING, controller.stage(), "and the weapon that is now held draws");
+    }
+
+    @Test
+    void aDrawWhoseWeaponIsGoneEndsTheTransitionAtOnce() {
+        controller.reset();
+        controller.tick();
+        env.selectedSlot = 1;
+        controller.tick();
+        assertEquals(HandoffStage.DRAWING, controller.stage());
+
+        visuals.release();
+        controller.tick();
+
+        assertEquals(HandoffStage.IDLE, controller.stage(),
+                "no clip can finish for a weapon that is not drawn, so the hand must be released instead of waiting for "
+                        + "the safety deadline");
+        assertFalse(controller.isTransitioning());
+    }
+
+    @Test
+    void theIncomingDrawIsArmedUntilTheFrameThatDrawsIt() {
+        assertTrue(controller.requestSwitch(1));
+        visuals.finishHolster();
+        controller.tick();
+
+        assertEquals(HandoffStage.DRAWING, controller.stage());
+        assertTrue(visuals.drawArmed, "the incoming draw is armed, paused at its first frame");
+        assertFalse(visuals.drawReleased, "and nothing has drawn it yet");
+
+        // A frame that draws another weapon must not release it: the notification is generation-guarded like every other
+        // boundary.
+        controller.notifyWeaponRendered(RIFLE_A);
+        assertFalse(visuals.drawReleased, "a stale frame releases nothing");
+
+        controller.notifyWeaponRendered(RIFLE_B);
+        assertTrue(visuals.drawReleased, "the frame that really draws the weapon starts the raise on that frame");
+        assertEquals(HandoffStage.DRAWING, controller.stage(), "only the playback started, the window is unchanged");
+
+        visuals.finishDraw();
+        controller.tick();
+        assertEquals(HandoffStage.IDLE, controller.stage());
+    }
+
+    @Test
+    void aDrawNoFrameEverDrawsIsReleasedByTheTick() {
+        assertTrue(controller.requestSwitch(1));
+        visuals.finishHolster();
+        controller.tick();
+        assertTrue(visuals.drawArmed);
+
+        // Third person, an open screen or a hidden hand: no first-person frame draws the weapon at all, so the pause must
+        // not outlive a couple of ticks.
+        controller.tick();
+        controller.tick();
+        assertFalse(visuals.drawReleased, "two ticks are still inside the safety window");
+
+        controller.tick();
+        assertTrue(visuals.drawReleased, "the raise is released anyway, so the hand can never stay frozen");
+        assertEquals(HandoffStage.DRAWING, controller.stage(), "and the session still ends on its own deadline");
+    }
+
+    @Test
+    void theFrameBetweenTwoTicksObservesTheSelectionAndArmsTheDraw() {
+        controller.reset();
+        controller.tick();
+
+        // A scroll key applies the slot change between two ticks; the frame that follows it must already draw the weapon.
+        env.selectedSlot = 2;
+        controller.observeBeforeRender();
+
+        assertEquals(HandoffStage.DRAWING, controller.stage(), "the frame after the switch raises the weapon");
+        assertEquals(SHOTGUN_C, visuals.visualIdentity());
+        assertTrue(visuals.drawArmed, "and the clip waits for that frame instead of running unseen");
+    }
+
+    @Test
+    void theIdleTickAfterACompletedDrawDoesNotRaiseTheWeaponAgain() {
+        assertTrue(controller.requestSwitch(1));
+        visuals.finishHolster();
+        controller.tick();
+        visuals.finishDraw();
+        controller.tick();
+
+        controller.tick();
+        controller.tick();
+
+        assertEquals(HandoffStage.IDLE, controller.stage());
+        assertEquals(1, visuals.drawStarts, "a settled weapon is not drawn again");
+        assertEquals(RIFLE_B, visuals.visualIdentity());
+    }
+
 
     @Test
     void aClipThatNeverFinishesIsCommittedAtItsDeadline() {
@@ -251,13 +475,13 @@ class WeaponHandoffControllerTest {
         controller.tick();
 
         assertEquals(HandoffStage.HOLSTERING, controller.stage(), "the outgoing weapon still plays its holster");
-        assertEquals(RIFLE_A, visuals.activeIdentity());
+        assertEquals(RIFLE_A, visuals.visualIdentity());
         assertFalse(controller.session().deferred(), "nothing is deferred: the slot already changed");
 
         visuals.finishHolster();
         controller.tick();
 
-        assertEquals(RIFLE_B, visuals.activeIdentity());
+        assertEquals(RIFLE_B, visuals.visualIdentity());
         assertEquals(List.of(), env.committedSlots, "no second commit");
     }
 
@@ -268,7 +492,7 @@ class WeaponHandoffControllerTest {
         controller.tick();
 
         assertEquals(HandoffStage.IDLE, controller.stage());
-        assertEquals(WeaponIdentity.NONE, visuals.activeIdentity(), "no visual weapon survives the reset");
+        assertEquals(WeaponIdentity.NONE, visuals.visualIdentity(), "no visual weapon survives the reset");
         assertEquals(1, visuals.releases);
     }
 
@@ -279,7 +503,7 @@ class WeaponHandoffControllerTest {
 
         assertEquals(HandoffStage.IDLE, controller.stage());
         assertNull(controller.session());
-        assertEquals(WeaponIdentity.NONE, visuals.activeIdentity());
+        assertEquals(WeaponIdentity.NONE, visuals.visualIdentity());
         assertEquals(1, visuals.releases);
 
         // A later request starts from a clean state and, with no visual weapon, is left to vanilla.
@@ -302,6 +526,6 @@ class WeaponHandoffControllerTest {
         assertEquals(HandoffStage.IDLE, controller.stage());
         assertEquals(List.of(), env.switchStarted);
         assertEquals(List.of(), env.committedSlots);
-        assertEquals(RIFLE_A, visuals.activeIdentity(), "the visual weapon does not change");
+        assertEquals(RIFLE_A, visuals.visualIdentity(), "the visual weapon does not change");
     }
 }

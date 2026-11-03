@@ -9,7 +9,7 @@ import com.arg_studios.arg_weaponry.client.render.WeaponDisplayCache;
 import com.arg_studios.arg_weaponry.pack.ContentPack;
 import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
 import com.arg_studios.arg_weaponry.weapon.animation.BedrockAnimation;
-import com.arg_studios.arg_weaponry.weapon.animation.WeaponAnimationCache;
+import com.arg_studios.arg_weaponry.weapon.animation.ReusableAnimations;
 import com.arg_studios.arg_weaponry.weapon.equip.EquipAnimationResolver;
 
 /**
@@ -87,11 +87,12 @@ public final class EquipClips {
             return 0.0;
         }
         WeaponDisplay display = WeaponDisplayCache.instance().get(pack, definition).orElse(null);
-        if (display == null || display.animations() == null) {
+        if (display == null
+                || (display.animations() == null && definition.reusableDefaultAnimations().isEmpty())) {
             return 0.0;
         }
         Optional<BedrockAnimation> animation =
-                WeaponAnimationCache.instance().animation(pack, display.animations(), clipName);
+                ReusableAnimations.animation(pack, definition, display.animations(), clipName);
         return animation.map(BedrockAnimation::lengthSeconds).orElse(0.0);
     }
 

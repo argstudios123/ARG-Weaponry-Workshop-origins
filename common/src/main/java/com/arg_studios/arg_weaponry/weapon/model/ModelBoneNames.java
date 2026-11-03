@@ -5,12 +5,14 @@ import java.util.Map;
 /**
  * The bone names that carry a fixed meaning for ARG Weaponry.
  *
- * <p>These three bones intentionally stay separate:</p>
+ * <p>The placement and animation targets stay separate:</p>
  * <ul>
  *     <li>{@link #DEFAULT_VIEW} anchors the normal first-person placement,</li>
  *     <li>{@link #AIMING_VIEW} anchors the aiming first-person placement,</li>
  *     <li>{@link #CAMERA} is an animation target for camera animations and is never used as a
- *     placement anchor.</li>
+ *     placement anchor,</li>
+ *     <li>{@link #MAIN} (or the ARG-compatible {@link #MAIN_FALLBACK}) is the animated weapon root the ADS constraint
+ *     corrects, and {@link #ADS_OFFSET} is its retention control bone.</li>
  * </ul>
  *
  * <p>Arm bones are a fourth, separate meaning: they are the bones a first-person player arm is drawn at. See
@@ -26,6 +28,36 @@ public final class ModelBoneNames {
 
     /** Animation target for camera animations; not a placement anchor. */
     public static final String CAMERA = "camera";
+
+    /** The weapon's main animated transform, which the ADS constraint corrects. */
+    public static final String MAIN = "main";
+
+    /** The pre-existing ARG main bone, accepted when a model has no explicit {@link #MAIN}. */
+    public static final String MAIN_FALLBACK = "root";
+
+    /** The dedicated Blockbench bone that encodes the ADS constraint's retention values. */
+    public static final String ADS_OFFSET = "ads_offset";
+
+    /**
+     * Resolves the master bone of a weapon model: {@link #MAIN} when it exists, otherwise the backwards-compatible
+     * {@link #MAIN_FALLBACK}.
+     *
+     * <p>The lookup is deliberately tolerant: a {@code null} model, a model without either bone, or a bone named with
+     * different capitalisation simply yields {@code null}. No caller has to throw or invent a bone name, and a pack that
+     * does not use a master bone keeps rendering with the same root transform the renderer always used.</p>
+     *
+     * @param model the parsed model, may be {@code null}
+     * @return the resolved bone name, or {@code null} when neither name is present
+     */
+    public static String masterBone(WeaponModel model) {
+        if (model == null) {
+            return null;
+        }
+        if (model.bone(MAIN) != null) {
+            return MAIN;
+        }
+        return model.bone(MAIN_FALLBACK) != null ? MAIN_FALLBACK : null;
+    }
 
     /** Which player arm a rig bone drives. */
     public enum ArmSide {

@@ -31,9 +31,15 @@ final class FakeHandoffVisuals implements HandoffVisuals {
     int drawStarts;
     int stopHolsterCalls;
     int settleDrawCalls;
+    int releaseDrawCalls;
+
+    /** Whether the draw clip is armed (paused at its first frame) and still waiting for its first rendered frame. */
+    boolean drawArmed;
+    /** Whether the draw clip was released after being armed. */
+    boolean drawReleased;
 
     @Override
-    public WeaponIdentity activeIdentity() {
+    public WeaponIdentity visualIdentity() {
         return active;
     }
 
@@ -91,7 +97,22 @@ final class FakeHandoffVisuals implements HandoffVisuals {
         drawStarts++;
         drawOwner = active;
         drawDone = false;
+        // A real draw is armed paused: it only reaches its end once the owner releases it.
+        drawArmed = true;
+        drawReleased = false;
         return drawClipSeconds;
+    }
+
+    @Override
+    public boolean releaseDraw() {
+        if (!drawArmed) {
+            return false;
+        }
+        calls.add("releaseDraw");
+        drawArmed = false;
+        drawReleased = true;
+        releaseDrawCalls++;
+        return true;
     }
 
     @Override

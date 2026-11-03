@@ -121,6 +121,8 @@ class WeaponViewControllerEquipTest {
                 null,
                 List.of(),
                 List.of(),
+                null,
+                java.util.Map.of(),
                 java.util.Map.of(),
                 null,
                 null,
@@ -130,6 +132,7 @@ class WeaponViewControllerEquipTest {
                 List.of(),
                 List.of(),
                 List.of(),
+                null,
                 null,
                 null);
     }
@@ -465,6 +468,62 @@ class WeaponViewControllerEquipTest {
         assertTrue(controller.playEquip(pack, definition, "anim.test.holster", 0.74));
         assertEquals(-90.0, yaw(sample(controller)), 0.5,
                 "the holster starts at its own first frame; no pose from the earlier weapon may be reused");
+    }
+
+    @Test
+    void anArmedDrawConsumesNoClipTimeUntilTheFirstRenderedFrame() {
+        WeaponViewController controller = activated();
+
+        assertTrue(controller.armEquip(pack, definition, "anim.test.draw", 1.0, null),
+                "the draw clip is armed on the fresh animator");
+        assertTrue(controller.isEquipAwaitingFirstFrame(), "and it waits, paused, for the frame that draws it");
+        assertEquals(0.0, yaw(sample(controller)), 0.001, "the armed clip shows its own first frame");
+
+        // Two ticks pass without a first-person frame drawing the weapon (third person, a screen, or simply the tick that
+        // lands between the slot change and the next frame).
+        runTicks(controller, 0.1);
+        assertTrue(controller.isEquipAwaitingFirstFrame(), "no frame was drawn, so the clip is still armed");
+        assertEquals(0.0, yaw(sample(controller)), 0.001,
+                "and no part of the raise was consumed while the weapon could not be seen");
+
+        assertTrue(controller.releaseEquipPlayback(), "the first drawn frame starts the clip");
+        assertFalse(controller.releaseEquipPlayback(), "releasing twice cannot restart it");
+
+        runTicks(controller, 0.2);
+        assertEquals(18.0, yaw(sample(controller)), 1.5,
+                "0.2 s of the 1 s, 90 degree raise have now really played");
+    }
+
+    @Test
+    void anArmedDrawHoldsItsCrossFadeUntilItIsDrawn() {
+        WeaponViewController controller = activated();
+        runTicks(controller, 0.2);
+        WeaponPose outgoing = handOffToOtherOwner(controller);
+        assertEquals(-90.0, yaw(outgoing), 0.5, "the outgoing weapon is drawn at its holster pose");
+
+        assertTrue(controller.armEquip(pack, definition, "anim.test.draw", 1.0, null));
+        assertEquals(-90.0, yaw(sample(controller)), 0.5,
+                "the armed draw fades in from the pose the outgoing weapon ended on");
+
+        runTicks(controller, 0.3);
+        assertEquals(-90.0, yaw(sample(controller)), 0.5,
+                "the fade waits with the clip: consuming it while the weapon is invisible would make the first drawn "
+                        + "frame start mid-fade, which is the snap this test exists to prevent");
+
+        assertTrue(controller.releaseEquipPlayback());
+        assertEquals(-90.0, yaw(sample(controller)), 0.5,
+                "so the first frame the player really sees is still the outgoing pose");
+        double largest = largestStepOver(controller, 6);
+        assertEquals(10.8, yaw(sample(controller)), 0.5, "and the raise then eases into the draw clip");
+        assertTrue(largest < 40.0, "the handover is spread over the fade, largest step was " + largest);
+    }
+
+    @Test
+    void armingAClipTheResourceDoesNotContainLeavesTheControllerUntouched() {
+        WeaponViewController controller = activated();
+        assertFalse(controller.armEquip(pack, definition, "anim.test.missing", 1.0, null));
+        assertFalse(controller.isEquipAwaitingFirstFrame(), "nothing was armed");
+        assertEquals("anim.test.idle", controller.idleAnimation(), "so idle playback is still the owner");
     }
 
     // ---------------------------------------------------------------- pose helpers

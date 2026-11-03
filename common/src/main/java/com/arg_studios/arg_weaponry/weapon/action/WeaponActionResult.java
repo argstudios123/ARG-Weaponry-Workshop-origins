@@ -37,6 +37,7 @@ package com.arg_studios.arg_weaponry.weapon.action;
  *       there is nothing to reload.</li>
  *   <li>{@link #EQUIPPING} — the request arrived while the weapon is being drawn or holstered, so no action may
  *       start.</li>
+ *   <li>{@link #SPRINTING} — the weapon forbids firing while the player is sprinting.</li>
  * </ul>
  */
 public enum WeaponActionResult {
@@ -179,7 +180,17 @@ public enum WeaponActionResult {
      * Nothing is consumed and nothing is scheduled; the action may be requested again once the equip window has
      * finished.</p>
      */
-    EQUIPPING;
+    EQUIPPING,
+
+    /**
+     * The weapon forbids firing while the player is sprinting.
+     *
+     * <p>Produced only when the pack explicitly wrote {@code "allow_firing_when_sprinting": false} and the
+     * authoritative player is sprinting. Nothing is consumed, no sound, recoil or animation is triggered, and no
+     * accepted-shot result is sent. The same result stops a running automatic or burst session as soon as the player
+     * starts sprinting.</p>
+     */
+    SPRINTING;
 
     /**
      * @return {@code true} only for {@link #OK}, i.e. when the validated request may be executed
@@ -220,6 +231,7 @@ public enum WeaponActionResult {
             case INSPECT_IN_PROGRESS -> 19;
             case INSPECTION_UNAVAILABLE -> 20;
             case EQUIPPING -> 21;
+            case SPRINTING -> 22;
         };
     }
 

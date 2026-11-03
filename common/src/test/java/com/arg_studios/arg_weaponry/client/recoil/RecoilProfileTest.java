@@ -235,6 +235,58 @@ class RecoilProfileTest {
         assertEquals(PlayerRecoilController.RECOVERY_SECONDS / 0.15, impulse.recoverySeconds(), 1.0E-12);
     }
 
+    @Test
+    void theKickbackModifierScalesOnlyTheWeaponWhileAiming() {
+        RecoilProfile tuned = RecoilProfile.of(
+                new WeaponDefinition.Recoil(0.06, 2.5, null, 0.02, 0.02, 1.0, 1.0, 0.6, 0.8, 0.25), null);
+
+        assertEquals(0.06, tuned.kickbackBlocks(false), 0.0, "hip fire keeps the authored amplitude");
+        assertEquals(0.015, tuned.kickbackBlocks(true), 1.0E-12, "ADS applies the modifier exactly once");
+        assertEquals(2.5, tuned.verticalDegrees(), 0.0, "vertical recoil is never scaled by the kickback modifier");
+        assertEquals(0.02, tuned.horizontalLeftDegrees(), 0.0);
+        assertEquals(0.02, tuned.horizontalRightDegrees(), 0.0);
+        assertEquals(2.5 * 0.6, tuned.viewRecoilImpulse(null, true, false).pitchDegrees(), 1.0E-12,
+                "aim_multiplier still owns the camera impulse");
+    }
+
+    @Test
+    void aZeroKickbackAimingModifierRemovesOnlyTheAdsKickback() {
+        RecoilProfile tuned = RecoilProfile.of(
+                new WeaponDefinition.Recoil(0.06, 2.5, null, 0.02, 0.02, 1.0, 1.0, 0.6, 0.8, 0.0), null);
+
+        assertEquals(0.06, tuned.kickbackBlocks(false), 0.0);
+        assertEquals(0.0, tuned.kickbackBlocks(true), 0.0);
+        assertTrue(tuned.hasKickback(), "the weapon still kicks at hip fire");
+        assertTrue(tuned.hasViewRecoil(), "and the camera recoil is untouched");
+    }
+
+    @Test
+    void anOlderProfileKeepsTheUnmodifiedKickback() {
+        RecoilProfile legacy = RecoilProfile.of(
+                new WeaponDefinition.Recoil(0.06, 2.5, null, 0.02, 0.02, 1.0, 1.0, 0.6, 0.8), null);
+
+        assertEquals(RecoilProfile.DEFAULT_KICKBACK_AIMING_MODIFIER, legacy.kickbackAimingModifier(), 0.0);
+        assertEquals(legacy.kickbackBlocks(), legacy.kickbackBlocks(true), 0.0,
+                "a missing property must preserve the exact previous ADS kickback");
+    }
+
+    @Test
+    void theKickbackControllerReceivesTheAlreadyScaledAdsAmplitude() {
+        RecoilProfile tuned = RecoilProfile.of(
+                new WeaponDefinition.Recoil(0.06, 2.5, null, 0.02, 0.02, 1.0, 1.0, 0.6, 0.8, 0.25), null);
+        WeaponKickbackController hip = new WeaponKickbackController();
+        WeaponKickbackController ads = new WeaponKickbackController();
+        hip.tick(0.05);
+        ads.tick(0.05);
+        hip.shot(tuned, false);
+        ads.shot(tuned, true);
+        hip.tick(0.05);
+        ads.tick(0.05);
+
+        assertEquals(0.25, ads.sample(0.5F).backwardBlocks() / hip.sample(0.5F).backwardBlocks(), 1.0E-6,
+                "the modifier is applied once, by the profile, before the impulse curve");
+    }
+
     /**
      * @return a {@link Random} whose first boolean draw is {@code false}, i.e. "the leftward side"
      */

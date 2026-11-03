@@ -9,24 +9,7 @@ import net.minecraft.network.codec.StreamCodec;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * The selectable fire modes of a weapon.
- *
- * <p>This enum carries no behaviour yet: it only names a selection and defines how that selection is
- * stored and transmitted. Firing is a later milestone.</p>
- *
- * <h2>Stable serialized values</h2>
- * <p>Every constant declares <em>both</em> of its serialized forms explicitly:</p>
- * <ul>
- *     <li>{@link #serializedName()} is the persistent value written by {@link #CODEC} to the item data
- *     component in a save file,</li>
- *     <li>{@link #networkId()} is the value written by {@link #STREAM_CODEC} to the network.</li>
- * </ul>
- * <p>Neither is derived from {@link Enum#ordinal()}. Adding a constant later therefore cannot silently
- * change the meaning of a value that was already written: a new constant must choose a new unique name
- * and a new unique id, and existing ids must never be renumbered or reused. Ids start at 1 so that a
- * forgotten value cannot be mistaken for {@code SINGLE}.</p>
- */
+
 public enum FireMode {
 
     /** One shot per trigger pull. */

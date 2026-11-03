@@ -138,6 +138,8 @@ class EquipClipsTest {
                 null,
                 List.of(),
                 List.of(),
+                null,
+                java.util.Map.of(),
                 java.util.Map.of(),
                 null,
                 null,
@@ -148,6 +150,7 @@ class EquipClipsTest {
                 List.of(),
                 List.of(),
                 List.of(),
+                null,
                 null,
                 null);
     }

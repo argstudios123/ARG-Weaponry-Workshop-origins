@@ -4,21 +4,7 @@ import com.arg_studios.arg_weaponry.Constants;
 import com.arg_studios.arg_weaponry.client.camera.CameraTransform;
 import org.joml.Quaternionf;
 
-/**
- * Opt-in tracing of the camera and recoil layers, for diagnosing transform problems without guessing.
- *
- * <h2>Why it exists</h2>
- * <p>The 10S jitter could not be attributed from the outside: the frame rate was healthy, the tests passed, and several
- * layers write to the camera. This class prints, at most {@link #MAX_LINES_PER_SECOND} times per second and only when it is
- * switched on, the values that distinguish the layers: the camera's own orientation before the weapon layers, the composed
- * orientation after the camera-bone animation, the camera-space transform itself, and the recoil layers. If a layer is
- * applied twice, or an old absolute value is being re-applied, the trace shows it immediately.</p>
- *
- * <h2>How to switch it on</h2>
- * <p>Start the game with {@code -Darg_weaponry.debug_transforms=true} (or run {@code mvn}-style with
- * {@code -Darg_weaponry.debug_transforms}). Nothing is logged otherwise - no per-frame output in normal play, which is a hard
- * requirement of the hotfix.</p>
- */
+
 public final class TransformDiagnostics {
 
     /** The system property that enables the trace. */

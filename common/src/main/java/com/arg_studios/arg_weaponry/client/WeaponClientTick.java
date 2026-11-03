@@ -4,13 +4,11 @@ import com.arg_studios.arg_weaponry.client.aiming.WeaponAiming;
 import com.arg_studios.arg_weaponry.client.animation.WeaponViewControllers;
 import com.arg_studios.arg_weaponry.client.audio.ActionSoundHandles;
 import com.arg_studios.arg_weaponry.client.camera.FirstPersonCamera;
+import com.arg_studios.arg_weaponry.client.input.ClientReloadSequence;
 import com.arg_studios.arg_weaponry.client.input.WeaponFireKey;
 import com.arg_studios.arg_weaponry.client.recoil.WeaponRecoil;
-import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.item.ItemStack;
 
 /**
  * The single client-tick entry point of the mod's per-frame systems.
@@ -23,6 +21,9 @@ import net.minecraft.world.item.ItemStack;
  * <ol>
  *   <li>the held weapons' animation timelines - the owner of playback time, which is what lets a reload or an inspection
  *   keep running while the first-person renderer is not drawing,</li>
+ *   <li>the staged clips of an accepted reload - each clip starts at the moment the server planned, so a shell-by-shell
+ *   reload animates stage by stage. It runs after the timelines so a clip that just expired is released first and the
+ *   next stage starts on a clean controller instead of being swallowed by the same-clip no-op,</li>
  *   <li>the camera-bone transform, evaluated from the pose just advanced so the level camera and the view model share one
  *   frame,</li>
  *   <li>the aim-down-sights transition,</li>
@@ -73,6 +74,7 @@ public final class WeaponClientTick {
         lastCameraType = cameraType;
 
         WeaponViewControllers.instance().tickHeldWeapons();
+        ClientReloadSequence.tick();
         WeaponAiming.clientTick(minecraft, delta);
         WeaponRecoil.clientTick(minecraft, delta);
 

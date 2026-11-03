@@ -29,6 +29,16 @@ class DrawHolsterConfigTest {
         assertTrue(defaults.enableDrawHolster(), "the feature is enabled unless it is switched off");
         assertTrue(defaults.holsterSwitchDelay(), "delayed switches are enabled unless they are switched off");
         assertEquals(0.0, defaults.holsterSkipBelowDrawProgress(), "the skip rule is opt-in");
+        assertTrue(defaults.blockGunsInOffhand(), "a weapon is kept out of the offhand unless that is switched off");
+    }
+
+    @Test
+    void theOffhandRestrictionCanBeSwitchedOffForAFutureDualWield() {
+        assertFalse(DrawHolsterConfig.parse("{ \"blockGunsInOffhand\": false }").blockGunsInOffhand(),
+                "the one switch a dual-wield implementation would flip");
+        assertTrue(DrawHolsterConfig.parse("{ \"blockGunsInOffhand\": true }").blockGunsInOffhand());
+        assertTrue(new DrawHolsterConfig.Settings(true, true, 0.0, true).blockGunsInOffhand(),
+                "the four-argument form used before the toggle existed keeps the restriction on");
     }
 
     @Test

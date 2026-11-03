@@ -87,6 +87,15 @@ public final class WeaponInspectInput {
      * @param hand the hand to test
      * @return whether an accepted inspection of that hand is still running
      */
+    /**
+     * Whether an inspection is running for one hand, checked by the aiming rule and by the crosshair rule.
+     *
+     * <p>The session is timed: once its authoritative duration has elapsed the state is reported as finished even if the
+     * clip is still blending out, so a refused aim cannot outlive the action that caused it.</p>
+     *
+     * @param hand the hand to test
+     * @return whether that hand is inspecting right now
+     */
     public static boolean isInspecting(InteractionHand hand) {
         if (activeHand != hand) {
             return false;

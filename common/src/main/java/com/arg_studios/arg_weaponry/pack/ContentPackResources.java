@@ -126,6 +126,56 @@ public final class ContentPackResources {
         }
     }
 
+    /**
+     * Resolves a texture resource, tolerating an identifier that already carries the file extension.
+     *
+     * <p>Textures are referenced as Minecraft identifiers ({@code arg_pack:textures/gui/hud/slots/x}), but creators also
+     * write the path the file actually has ({@code arg_pack:weapons/special/muzzle_flash/flash.png}). Both spellings must
+     * resolve to the same file, so the exact form is tried first and the form without a known extension second; nothing
+     * else is guessed.</p>
+     *
+     * @param pack      the pack to resolve inside
+     * @param id        the texture identifier
+     * @param directory the directory below {@code assets/<namespace>}, for example {@code textures}
+     * @return the resolved resource, or empty when the pack provides neither spelling
+     */
+    public static Optional<Resolved> findTexture(ContentPack pack, ResourceId id, String directory) {
+        Optional<Resolved> direct = find(pack, id, directory, TEXTURE_SUFFIXES);
+        if (direct.isPresent()) {
+            return direct;
+        }
+        ResourceId withoutSuffix = stripTextureSuffix(id);
+        return withoutSuffix == null ? Optional.empty() : find(pack, withoutSuffix, directory, TEXTURE_SUFFIXES);
+    }
+
+    /**
+     * Removes a known texture extension from an identifier's path.
+     *
+     * @param id the identifier as written by the creator
+     * @return the same identifier without a trailing texture extension, or {@code null} when it has none (or the
+     *         remainder would not be a valid path)
+     */
+    public static ResourceId stripTextureSuffix(ResourceId id) {
+        if (id == null) {
+            return null;
+        }
+        for (String suffix : TEXTURE_SUFFIXES) {
+            if (!id.path().endsWith(suffix)) {
+                continue;
+            }
+            String trimmed = id.path().substring(0, id.path().length() - suffix.length());
+            if (trimmed.isEmpty() || trimmed.endsWith("/")) {
+                return null;
+            }
+            try {
+                return new ResourceId(id.namespace(), trimmed);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     /** @return the human readable candidate paths, for diagnostics. */
     public static String describeCandidates(ResourceId id, String directory, List<String> suffixes) {
         StringBuilder builder = new StringBuilder();

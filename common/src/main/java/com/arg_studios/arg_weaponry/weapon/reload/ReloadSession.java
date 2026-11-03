@@ -34,10 +34,11 @@ import java.util.UUID;
  * @param startingAmmo   the magazine count at reload start, the value of {@code reload_count}
  * @param emptyMagazine  whether the magazine was empty at reload start, which selects the empty-reload sound
  * @param soundKey       the {@code sounds} key the client should play ({@code reload_empty} or {@code reload})
+ * @param timeline       the planned stages and insertion points this session executes; never {@code null}
  */
 public record ReloadSession(UUID playerId, InteractionHand hand, int slot, String weaponItemId, int sequence,
                             long startTick, long completeTick, String animation, int durationTicks,
-                            int startingAmmo, boolean emptyMagazine, String soundKey) {
+                            int startingAmmo, boolean emptyMagazine, String soundKey, ReloadTimeline timeline) {
 
     public ReloadSession {
         if (playerId == null || hand == null || weaponItemId == null) {
@@ -54,6 +55,9 @@ public record ReloadSession(UUID playerId, InteractionHand hand, int slot, Strin
         }
         if (completeTick < startTick) {
             throw new IllegalArgumentException("A reload cannot complete before it started");
+        }
+        if (timeline == null) {
+            throw new IllegalArgumentException("A reload session needs a planned timeline");
         }
     }
 

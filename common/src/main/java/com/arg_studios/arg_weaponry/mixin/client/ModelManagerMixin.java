@@ -23,8 +23,11 @@ import java.util.Map;
  * the single point where Minecraft resolves an item id to a model.</p>
  *
  * <p>This is loader-independent: Fabric and NeoForge both use {@link ModelManager}, so one shared hook covers
- * both without duplicating model-selection logic. A model that a pack or resource pack does provide for an id
- * always wins, because both selections are only consulted when no model was baked for the id. The first-person
+ * both without duplicating model-selection logic. Every registered weapon id is taken over here, because the model
+ * Minecraft baked for such an id is only ever an <em>icon</em> - a document the pack ships, or the flat slot icon this
+ * mod synthesises for the GUI (see {@code ContentPackClientPack}) - and the world contexts must draw the weapon's own
+ * geometry instead. That icon is handed to the static model as its fallback rather than being dropped, so the GUI,
+ * the first-person contexts and any weapon whose display cannot be resolved look exactly as before. The first-person
  * weapon renderer never goes through this path.</p>
  */
 @Mixin(ModelManager.class)
@@ -38,11 +41,9 @@ public abstract class ModelManagerMixin {
         if (bakedItemStackModels == null || id == null) {
             return;
         }
-        if (WeaponItemModels.isWeaponId(id)) {
-            ItemModel fallback = WeaponItemModels.fallbackFor(bakedItemStackModels, id);
-            if (fallback != null) {
-                callbackInfo.setReturnValue(fallback);
-            }
+        ItemModel weaponModel = WeaponItemModels.staticModelFor(bakedItemStackModels, id);
+        if (weaponModel != null) {
+            callbackInfo.setReturnValue(weaponModel);
             return;
         }
 

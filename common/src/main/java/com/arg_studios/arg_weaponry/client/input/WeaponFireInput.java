@@ -4,12 +4,14 @@ import com.arg_studios.arg_weaponry.Constants;
 import com.arg_studios.arg_weaponry.client.animation.WeaponViewControllers;
 import com.arg_studios.arg_weaponry.client.audio.WeaponActionSounds;
 import com.arg_studios.arg_weaponry.client.recoil.WeaponRecoil;
+import com.arg_studios.arg_weaponry.client.render.MuzzleFlash;
 import com.arg_studios.arg_weaponry.item.WeaponItem;
 import com.arg_studios.arg_weaponry.network.WeaponFirePayload;
 import com.arg_studios.arg_weaponry.network.WeaponTriggerPayload;
 import com.arg_studios.arg_weaponry.platform.Services;
 import com.arg_studios.arg_weaponry.weapon.action.WeaponActionResult;
 import com.arg_studios.arg_weaponry.weapon.fire.FiringModes;
+import com.arg_studios.arg_weaponry.weapon.fire.SprintFiringPolicy;
 import com.arg_studios.arg_weaponry.weapon.fire.WeaponFireSessions;
 import com.arg_studios.arg_weaponry.weapon.state.FireMode;
 import net.minecraft.client.Minecraft;
@@ -108,7 +110,8 @@ public final class WeaponFireInput {
      * @param player the local player, may be {@code null}
      */
     public static void onFireKeyPressed(LocalPlayer player) {
-        if (player == null || !holdsWeapon(player, InteractionHand.MAIN_HAND)) {
+        if (player == null || !holdsWeapon(player, InteractionHand.MAIN_HAND)
+                || isBlockedBySprint(player, InteractionHand.MAIN_HAND)) {
             return;
         }
         FireMode mode = currentMode(player, InteractionHand.MAIN_HAND);
@@ -130,6 +133,11 @@ public final class WeaponFireInput {
      */
     public static void requestFire(LocalPlayer player, InteractionHand hand) {
         if (player == null) {
+            return;
+        }
+        // [SprintFiring hook] The client refuses a request the server would refuse as well, so no packet, sound or
+        // prediction starts for a weapon that forbids sprint firing. The server still re-checks authoritatively.
+        if (isBlockedBySprint(player, hand)) {
             return;
         }
         // [DrawHolster hook] No firing request is sent while the weapon is being drawn or holstered.
@@ -157,7 +165,7 @@ public final class WeaponFireInput {
      * @param hand   the hand holding the weapon
      */
     public static void onTriggerPressed(LocalPlayer player, InteractionHand hand) {
-        if (player == null || hand == null || triggerHand != null) {
+        if (player == null || hand == null || triggerHand != null || isBlockedBySprint(player, hand)) {
             return;
         }
         // [DrawHolster hook] An automatic or burst session cannot be opened while the weapon is being drawn or holstered.
@@ -182,6 +190,13 @@ public final class WeaponFireInput {
      */
     public static void onTriggerHeld() {
         if (triggerHand == null) {
+            return;
+        }
+        LocalPlayer player = Minecraft.getInstance().player;
+        if (isBlockedBySprint(player, triggerHand)) {
+            // Sprinting began while the trigger was down: release the session immediately rather than heartbeating a
+            // press the server is about to refuse.
+            onTriggerReleased();
             return;
         }
         TRIGGER.heartbeat().ifPresent(packet -> Services.NETWORK.sendToServer(
@@ -226,10 +241,34 @@ public final class WeaponFireInput {
                 && minecraft.mouseHandler.isMouseGrabbed()
                 && WeaponFireKey.isHeld(minecraft)
                 && player.getItemInHand(triggerHand).getItem() instanceof WeaponItem
-                && currentMode(player, triggerHand) != FireMode.SINGLE;
+                && currentMode(player, triggerHand) != FireMode.SINGLE
+                && !isBlockedBySprint(player, triggerHand);
         if (!stillHolding) {
             onTriggerReleased();
         }
+    }
+
+    /**
+     * The client's copy of the authoritative sprint-firing rule.
+     *
+     * <p>It uses the same {@link SprintFiringPolicy} as {@code WeaponActions} and the server-owned trigger sessions, so
+     * the two sides cannot disagree about whether a request is allowed. A missing
+     * {@code allow_firing_when_sprinting} resolves to {@code true}, which is why an older weapon keeps firing exactly as
+     * it did before.</p>
+     *
+     * @param player the local player, may be {@code null}
+     * @param hand   the hand that would fire, may be {@code null}
+     * @return whether a firing request must be suppressed on the client
+     */
+    public static boolean isBlockedBySprint(LocalPlayer player, InteractionHand hand) {
+        if (player == null || hand == null || !player.isSprinting()) {
+            return false;
+        }
+        ItemStack stack = player.getItemInHand(hand);
+        if (!(stack.getItem() instanceof WeaponItem weapon) || weapon.definition() == null) {
+            return false;
+        }
+        return !SprintFiringPolicy.allows(true, weapon.definition().allowFiringWhenSprinting());
     }
 
     /**
@@ -299,6 +338,10 @@ public final class WeaponFireInput {
         // Recoil: one impulse for this accepted shot, and only for it. A rejected request never reaches this method, and
         // nothing is predicted client side, so a shot cannot be counted twice.
         WeaponRecoil.onAcceptedShot(hand);
+        // The muzzle flash: started from the same acceptance, for the same reason. It resolves its own attachment point
+        // (one configured bone every shot, or one of several at random) and restarts on every accepted shot, so a burst
+        // and an automatic stream flash once per shot without ever stacking animations.
+        MuzzleFlash.onAcceptedShot(hand);
     }
 
     /**
@@ -310,6 +353,7 @@ public final class WeaponFireInput {
      */
     public static void reset() {
         ACCEPTED_SHOTS.clear();
+        MuzzleFlash.reset();
         clearTrigger();
     }
 

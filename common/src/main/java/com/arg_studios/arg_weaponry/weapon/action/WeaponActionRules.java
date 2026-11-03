@@ -86,6 +86,28 @@ public final class WeaponActionRules {
      */
     public static WeaponActionResult validateFire(AmmoCapacity ammoCapacity, WeaponState state,
                                                  List<FireMode> supportedModes) {
+        return validateFire(ammoCapacity, state, supportedModes, true, false);
+    }
+
+    /**
+     * The sprint-aware form of {@link #validateFire(AmmoCapacity, WeaponState, List)}.
+     *
+     * <p>The rule is shared with the client through
+     * {@link com.arg_studios.arg_weaponry.weapon.fire.SprintFiringPolicy}, and is applied after the ordinary weapon
+     * conditions so a request against a broken or empty weapon still reports the more fundamental reason. It is
+     * evaluated before any side effect, which is what guarantees that a refused sprinting request consumes no ammunition,
+     * plays no sound, starts no animation and sends no accepted-shot result.</p>
+     *
+     * @param ammoCapacity            the held weapon's definition-derived capacity
+     * @param state                   the state the held stack carries
+     * @param supportedModes          the firing modes the definition declares
+     * @param allowFiringWhenSprinting the weapon's {@code allow_firing_when_sprinting} value
+     * @param sprinting               whether the authoritative player is sprinting
+     * @return {@link WeaponActionResult#OK} when the request may be executed, otherwise the first refusal
+     */
+    public static WeaponActionResult validateFire(AmmoCapacity ammoCapacity, WeaponState state,
+                                                 List<FireMode> supportedModes,
+                                                 boolean allowFiringWhenSprinting, boolean sprinting) {
         if (state == null) {
             return WeaponActionResult.INVALID_WEAPON_STATE;
         }
@@ -97,6 +119,10 @@ public final class WeaponActionRules {
         }
         if (ammoCapacity.isFinite() && state.isEmpty()) {
             return WeaponActionResult.MAGAZINE_EMPTY;
+        }
+        if (!com.arg_studios.arg_weaponry.weapon.fire.SprintFiringPolicy.allows(sprinting,
+                allowFiringWhenSprinting)) {
+            return WeaponActionResult.SPRINTING;
         }
         return WeaponActionResult.OK;
     }

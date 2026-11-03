@@ -24,10 +24,12 @@ import java.util.Set;
  * cached document can be shared by every weapon that references it without one instance affecting another.</p>
  *
  * <h2>Identity</h2>
- * <p>An entry is keyed by the <em>owning content pack</em> plus the <em>animation resource identifier</em>,
- * using the same {@code packId|namespace:path} convention the model cache uses. The animation name alone is
+ * <p>An entry is keyed by the <em>owning content pack</em>, the <em>resource directory</em> and the <em>animation
+ * resource identifier</em>, using a {@code packId|directory|namespace:path} convention. The animation name alone is
  * never a key: {@code anim.model.fire} can exist in several packs and several files, and two packs may ship
- * the same resource path with different content. Resources are resolved through
+ * the same resource path with different content. The directory is part of the key so a weapon's own
+ * {@code animations/...} document and a reusable {@code default_animations/...} library can never collide.
+ * Resources are resolved through
  * {@link ContentPackResources} exactly like models and textures; content packs are never mounted as vanilla
  * resource packs.</p>
  *
@@ -60,6 +62,9 @@ public final class WeaponAnimationCache {
     /** Directory below a namespace that holds animation documents. */
     public static final String ANIMATION_DIRECTORY = "animations";
 
+    /** Directory below a namespace that holds reusable animation libraries. */
+    public static final String LIBRARY_DIRECTORY = "default_animations";
+
     private static final WeaponAnimationCache INSTANCE = new WeaponAnimationCache();
 
     private final Map<String, Entry> entries = new HashMap<>();
@@ -86,11 +91,30 @@ public final class WeaponAnimationCache {
      * @return the document, or empty when it is missing, unreadable or malformed
      */
     public synchronized Optional<AnimationFile> load(ContentPack pack, ResourceId id) {
+        return load(pack, id, ANIMATION_DIRECTORY, "animation resource");
+    }
+
+    /**
+     * Returns the parsed document of a reusable animation library.
+     *
+     * <p>Library identifiers are resolved below {@code default_animations/} instead of {@code animations/}, which is
+     * the directory the schema names. Everything else - change detection, failure reporting and caching - is shared
+     * with the weapon's own animation document.</p>
+     *
+     * @param pack the owning content pack
+     * @param id   the library identifier with the {@code default_animations/} prefix already removed
+     * @return the document, or empty when it is missing, unreadable or malformed
+     */
+    public synchronized Optional<AnimationFile> loadLibrary(ContentPack pack, ResourceId id) {
+        return load(pack, id, LIBRARY_DIRECTORY, "reusable animation library");
+    }
+
+    private Optional<AnimationFile> load(ContentPack pack, ResourceId id, String directory, String label) {
         if (pack == null || id == null) {
             return Optional.empty();
         }
 
-        String key = key(pack, id);
+        String key = key(pack, id, directory);
         Entry entry = entries.get(key);
         if (entry != null && entry.resource().isUnchanged()) {
             hits++;
@@ -99,11 +123,11 @@ public final class WeaponAnimationCache {
 
         misses++;
         Optional<ContentPackResources.Resolved> resolved = ContentPackResources.find(pack, id,
-                ANIMATION_DIRECTORY, ContentPackResources.ANIMATION_SUFFIXES);
+                directory, ContentPackResources.ANIMATION_SUFFIXES);
         if (resolved.isEmpty()) {
             entries.remove(key);
-            warnOnce(key, "The animation resource '" + id.asString() + "' of pack '" + pack.id()
-                    + "' was not found; tried " + ContentPackResources.describeCandidates(id, ANIMATION_DIRECTORY,
+            warnOnce(key, "The " + label + " '" + id.asString() + "' of pack '" + pack.id()
+                    + "' was not found; tried " + ContentPackResources.describeCandidates(id, directory,
                     ContentPackResources.ANIMATION_SUFFIXES));
             return Optional.empty();
         }
@@ -137,7 +161,8 @@ public final class WeaponAnimationCache {
         BedrockAnimation animation = file.get().animation(animationName);
         if (animation == null) {
             synchronized (this) {
-                warnOnce(key(pack, id) + "|" + animationName, "The animation resource '" + id.asString()
+                warnOnce(key(pack, id, ANIMATION_DIRECTORY) + "|" + animationName, "The animation resource '"
+                        + id.asString()
                         + "' of pack '" + pack.id() + "' does not declare '" + animationName + "'");
             }
             return Optional.empty();
@@ -188,7 +213,23 @@ public final class WeaponAnimationCache {
         if (pack == null || id == null) {
             return;
         }
-        String key = key(pack, id);
+        String key = key(pack, id, ANIMATION_DIRECTORY);
+        entries.remove(key);
+        reportedFailures.remove(key);
+        generation++;
+    }
+
+    /**
+     * Forgets one cached reusable library, so the next lookup re-reads it.
+     *
+     * @param pack the owning content pack
+     * @param id   the library identifier with the {@code default_animations/} prefix removed
+     */
+    public synchronized void invalidateLibrary(ContentPack pack, ResourceId id) {
+        if (pack == null || id == null) {
+            return;
+        }
+        String key = key(pack, id, LIBRARY_DIRECTORY);
         entries.remove(key);
         reportedFailures.remove(key);
         generation++;
@@ -232,8 +273,8 @@ public final class WeaponAnimationCache {
         }
     }
 
-    private static String key(ContentPack pack, ResourceId id) {
-        return pack.id() + "|" + id.asString();
+    private static String key(ContentPack pack, ResourceId id, String directory) {
+        return pack.id() + "|" + directory + "|" + id.asString();
     }
 
     /**

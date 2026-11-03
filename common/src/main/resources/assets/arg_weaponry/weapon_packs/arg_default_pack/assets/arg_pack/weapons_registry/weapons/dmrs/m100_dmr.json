@@ -12,48 +12,108 @@
   "time_between_bursts" : 0.02,
   "rpm":300,
   "range": 195.0, // how much Far it can fire the range of the weapon
+  "custom_hud_ui": "default_pack_ui",
+  "allow_firing_when_sprinting": false,
+  // Muzzle Flash
+  "muzzle_flash": {
+    "enabled": true,
+    "bone": "muzzle_flash",
+    "texture": "arg_pack:weapons/special/muzzle_flash/universal_flash.png",
+    "size": 0.35,
+    "duration_ms": 20,
+    "sprites": {
+      "rows": 1,
+      "columns": 8,
+      "fps": 120,
+      "type": "random"
+    }
+  },
+//  // Muzzle Flash // Use this if you want to use Multiple bones , Maximum limit is 10
+//  "muzzle_flash": {
+//    "enabled": true,
+//    //    "bones": [
+//    //      "muzzle_flash",
+//    //      "muzzle_flash_2",
+//    //      "muzzle_flash_3"
+//    //    ],
+//     "texture": "arg_pack:weapons/special/muzzle_flash/universal_flash.png",
+//    "size": 0.35
+//  },
+
+
+
+
 
   // For Recoil Values
   "recoil": {
     "kickback_recoil_amplitude": 0.06,
+    "kickback_aiming_modifier": 0.8,
     "vertical_recoil": 2.5,
     "horizontal_recoil_left": 0.02, //Goes to left direction
     "horizontal_recoil_right": 0.02, //goes to right direction
 
     // New recoil settings
-    "smoothing": 0.5,
-    "recovery_speed": 4,
+    "smoothing": 1.2,
+    "recovery_speed": 3,
     "aim_multiplier": 0.6,
     "crouch_multiplier": 0.8
   },
 
-  "custom_hud_ui": "default_pack_ui",
 
   "aiming" : {
     "enabled": true,
-    "aimimg_zoom": 0.5,
-    "aiming_zoom_type" : "sine_in_out",
-//    linear	Constant transition speed.
-//    2	smooth	Smooth acceleration and deceleration.
-//    3	ease_in	Starts slowly and speeds up.
-//    4	ease_out	Starts quickly and slows down.
-//    5	ease_in_out	Starts slowly, speeds up, then slows down.
-//    6	sine_in	Sine-based easing, slow at the start.
-//    7	sine_out	Sine-based easing, slow at the end.
-//    8	sine_in_out
-
+    "aiming_zoom": 0.8,
+    "aiming_zoom_type" : "ease_out",
+    "aiming_speed": 1.15,
+    "aiming_animation_type" : "smooth",
+    "aiming_zoom_speed": 1.2,
+//    linear        Constant transition speed.
+//    smooth        Smooth acceleration and deceleration.
+//    ease_in       Starts slowly and speeds up.
+//    ease_out      Starts quickly and slows down.
+//    ease_in_out   Starts slowly, speeds up, then slows down.
+//    sine_in       Sine-based easing, slow at the start.
+//    sine_out      Sine-based easing, slow at the end.
+//    sine_in_out   Sine-based easing at both ends.
     "no_aiming_on_inspect": true,
-    "no_aiming_on_reload": true
+    "no_aiming_on_reload": false,
+    // Optional custom clips, resolved by name in this weapon's animation resource:
+    // "aim_in": "anim.model.aim_in",
+    // "aim_out": "anim.model.aim_out"
+
+
+    "ads_constraint": {
+      "enabled": true,
+      "camera": true,
+      "camera_constraint_modifier": 0.3
+    },
+    "ads_reload_zoom_control": {
+      "enabled": true,
+      "zoom_effect_type": "smooth",
+      "zoom_amount": 0.08
+    }
+
   },
+
     "reusable_default_animations": [
       "default_animations/weapons/pistols/walking_animations"
     ],
+
+
   "glowing_weapon_parts": [
     {
-      "name": "sights"
+      "part_name": "glowing_part"
     }
   ],
   
+  // Sound variation (optional, backwards compatible):
+  // a key may stay a single identifier, become an array of identifiers - one is chosen per shot, dealt in a
+  // shuffled order so the same one never plays twice in a row - or become an object that also tunes the playback.
+  // A gunshot gets a small default pitch/volume spread even when only one sample is declared.
+  //   "fire": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_fire"
+  //   "fire": ["arg_pack:.../m100_dmr_fire_1", "arg_pack:.../m100_dmr_fire_2"]
+  //   "fire": { "variants": ["arg_pack:.../m100_dmr_fire_1", "arg_pack:.../m100_dmr_fire_2"],
+  //             "volume": 0.9, "pitch": 1.0, "pitch_variation": 0.035, "volume_variation": 0.06 }
   "sounds": {
     "fire": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_fire",
     "fire_suppressed": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_fire_suppressed",
@@ -63,20 +123,30 @@
     "inspect_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_inspect_empty",
     "draw": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_draw",
     "draw_first": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_draw_first",
-    "draw_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_draw",
+    "draw_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_draw_empty",
     "holster": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_put_away",
-    "holster_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_put_away",
+    "holster_empty": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_put_away_empty",
     "headshot": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_headshot",
     "entity_hit": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_entity_hit",
     "entity_wasted": "arg_pack:weapons/dmrs/m100_dmr/m100_dmr_entity_wasted"
   },
-
   "accuracy": {
     "crouching":  0.3,
     "walking":  0.7,
     "standing":  0.2,
     "aiming": 0.002
   },
+
+  "weapons_sway": {
+    "enabled": true,
+    "weapon_sway_type" : "vanilla", // "vanilla", "rotatory", "type_1"
+    "intensity": 0.2,
+    "smoothing": 3.0,
+    "sway_sensitivity": 3.0,
+    "return_speed": 6.0,
+    "aim_multiplier": 0.25
+  },
+
   "sustained_firing_Recoil": {
     "positionZCap": 0.32,  // weapon moves backward slightly each shot.
     "positionZIncrement": 0.05, // after about 3 shots, it reaches the maximum sustained rearward movement.
@@ -127,12 +197,12 @@
   "holster_anims": [
     {
       "name": "anim.model.holster",
-      "duration": 0.74,
+      "duration": 0.84,
       "when": "ammoCount > 0"
     },
     {
       "name": "anim.model.holster_empty",
-      "duration": 0.74,
+      "duration": 0.84,
       "when": "ammoCount == 0"
     }
   ],
@@ -149,12 +219,12 @@
 
     {
       "name": "anim.model.draw",
-      "duration": 0.87,
+      "duration": 0.97,
       "when": "ammoCount > 0"
     },
     {
       "name": "anim.model.draw_empty",
-      "duration": 0.89,
+      "duration": 0.97,
       "when": "ammoCount == 0"
     }
   ],
@@ -181,7 +251,6 @@
       "animation": "anim.model.reload"
     }
   ]
-
 
   // THis is for Shotgun Reload i will keep it disabled
 //

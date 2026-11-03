@@ -7,9 +7,12 @@ import com.arg_studios.arg_weaponry.client.input.WeaponInspectInput;
 import com.arg_studios.arg_weaponry.client.input.WeaponReloadInput;
 import com.arg_studios.arg_weaponry.client.render.WeaponDisplayCache;
 import com.arg_studios.arg_weaponry.client.render.WeaponModelCache;
+import com.arg_studios.arg_weaponry.config.ArgConfig;
 import com.arg_studios.arg_weaponry.item.WeaponItem;
 import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
+import com.arg_studios.arg_weaponry.weapon.aiming.AdsReloadZoomControl;
 import com.arg_studios.arg_weaponry.weapon.aiming.ZoomCurve;
+import com.arg_studios.arg_weaponry.weapon.animation.WeaponPose;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBone;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBoneNames;
 import com.arg_studios.arg_weaponry.weapon.model.WeaponModel;
@@ -17,50 +20,35 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
-import org.joml.Matrix4f;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * The client's aim-down-sights state: whether the player is aiming, how far the transition has progressed, and the
- * resulting field-of-view multiplier.
- *
- * <h2>Timeline</h2>
- * <p>Progress is advanced on the client tick, like every other weapon timeline, so a perspective change, an open screen or
- * a paused renderer cannot freeze the transition. Rendering only samples it, with a partial-tick interpolation, which is
- * what makes the transition look smooth at any frame rate.</p>
- *
- * <h2>What decides that aiming may start</h2>
- * <ul>
- *   <li>a weapon in the main hand whose {@code aiming.enabled} is true,</li>
- *   <li>a resolvable model that actually contains the authored {@code aiming_view} bone - without it there is no sight
- *   alignment, so full ADS is refused rather than invented (the diagnostic names the weapon once),</li>
- *   <li>no running inspection when {@code no_aiming_on_inspect} is set,</li>
- *   <li>no running reload when {@code no_aiming_on_reload} is set,</li>
- *   <li>the dedicated aim key held, with world input focus.</li>
- * </ul>
- * <p>When any of those stops being true the transition blends back out; it never snaps, and it never leaves a residual
- * placement behind, because the render path simply blends towards zero.</p>
- *
- * <h2>Zoom</h2>
- * <p>The configured multiplier is interpolated against {@code 1.0} by the eased progress, so {@code 0.5} at half progress is
- * {@code 0.75} of the base field of view. The value is sanitised at parse time ({@code AimZoom}), so no division by zero or
- * inverted field of view can reach this class.</p>
- */
+
 public final class WeaponAiming {
 
-    /** Seconds a full hip-to-aim transition takes; the curve shapes the motion inside this duration. */
+    /** Seconds a full hip-to-aim transition takes at speed {@code 1.0}; the curve shapes the motion inside this duration. */
     public static final float TRANSITION_SECONDS = 0.18F;
 
     private static final Set<String> REPORTED = ConcurrentHashMap.newKeySet();
 
-    private static float progress;
-    private static float previousProgress;
+    private static final AimInput INPUT = new AimInput();
+
+    private static float aimProgress;
+    private static float previousAimProgress;
+    private static float zoomProgress;
+    private static float previousZoomProgress;
     private static float zoom = 1.0F;
-    private static ZoomCurve curve = ZoomCurve.LINEAR;
+    private static ZoomCurve animationCurve = ZoomCurve.LINEAR;
+    private static ZoomCurve zoomCurve = ZoomCurve.LINEAR;
+    private static double animationSpeed = WeaponDefinition.Aiming.DEFAULT_SPEED;
+    private static double zoomSpeed = WeaponDefinition.Aiming.DEFAULT_SPEED;
+    private static boolean holdingAim;
+    private static boolean aimRequested;
     private static String ownerItemId;
     private static AimBlockReason reason = AimBlockReason.NO_WEAPON;
+    private static WeaponDefinition.AdsReloadZoom reloadZoomConfig = WeaponDefinition.AdsReloadZoom.DISABLED;
+    private static final AdsReloadZoomControl RELOAD_ZOOM = new AdsReloadZoomControl();
 
     private WeaponAiming() {
     }
@@ -72,40 +60,86 @@ public final class WeaponAiming {
      * @param deltaSeconds the time elapsed since the previous tick, in seconds
      */
     public static void clientTick(Minecraft minecraft, double deltaSeconds) {
-        previousProgress = progress;
+        previousAimProgress = aimProgress;
+        previousZoomProgress = zoomProgress;
         LocalPlayer player = minecraft == null ? null : minecraft.player;
         if (player == null) {
             reset();
             return;
         }
         WeaponItem item = heldWeapon(player);
-        WeaponDefinition.Aiming aiming = item == null ? null : item.definition().aiming();
+        WeaponDefinition.Aiming aiming = item == null || item.definition() == null ? null : item.definition().aiming();
         WeaponModel model = item == null ? null : modelFor(item);
         String itemId = item == null ? null : String.valueOf(net.minecraft.core.registries.BuiltInRegistries.ITEM
                 .getKey(item));
         if (itemId == null || !itemId.equals(ownerItemId)) {
-            // A different weapon is held: the previous weapon's zoom and curve must not survive the switch.
-            if (itemId != null) {
-                zoom = aiming == null ? 1.0F : (float) aiming.zoom();
-                curve = aiming == null ? ZoomCurve.LINEAR : aiming.zoomCurve();
-            }
+            // A different weapon is held: the previous weapon's zoom, speeds and curves must not survive the switch. A
+            // latched toggle request is dropped as well, by the hard refusal the new weapon produces on this same tick.
             ownerItemId = itemId;
+            RELOAD_ZOOM.reset();
         }
-        if (aiming != null) {
-            zoom = (float) aiming.zoom();
-            curve = aiming.zoomCurve();
-        }
+        applyConfiguration(aiming);
 
         reason = evaluate(player, minecraft, item, aiming, model);
+        boolean wanted = INPUT.update(WeaponAimKey.isDown(), ArgConfig.toggleAiming(), reason);
+        // Aiming and inspection are mutually exclusive, and the exclusion is a cancellation, not a suspension: an
+        // inspection clears the aim state (so the sight alignment blends out like any other aim release) and the aim
+        // input is suppressed until the button is released, so the aim can never come back on its own when the
+        // inspection ends. PB keeps aiming in its own state machine and refuses aim requests while an action owns the
+        // weapon, which is the same rule expressed once instead of per action.
+        holdingAim = wanted && !reason.blocks();
+        // The raw intent, not the accepted aim: a reload that refuses normal aiming must still be able to run its own
+        // reload zoom, and the sprint guard must still cover a held aim during that refusal.
+        aimRequested = wanted && item != null && aiming != null && aiming.enabled();
+        boolean reloading = WeaponReloadInput.isReloading(InteractionHand.MAIN_HAND);
+        double reloadElapsed = Double.isFinite(deltaSeconds) && deltaSeconds > 0.0
+                ? Math.min(deltaSeconds, 0.25) : 0.05;
+        RELOAD_ZOOM.update(reloadZoomConfig.enabled(), reloading, aimRequested, reloadElapsed);
+
         // Progress is time based, not frame based: a stalled client catches up and a fast client does not speed up.
         double elapsed = Double.isFinite(deltaSeconds) && deltaSeconds > 0.0 ? Math.min(deltaSeconds, 0.25) : 0.05;
-        float step = (float) (elapsed / TRANSITION_SECONDS);
-        boolean wanted = !reason.blocks() && WeaponAimKey.isDown();
-        if (wanted) {
-            progress = Math.min(1.0F, progress + step);
-        } else {
-            progress = Math.max(0.0F, progress - step);
+        aimProgress = advance(aimProgress, holdingAim, elapsed * animationSpeed);
+        zoomProgress = advance(zoomProgress, holdingAim, elapsed * zoomSpeed);
+
+        // Stop an already running sprint cleanly. The sprint guards in the client mixins keep vanilla from starting a new
+        // one on the next tick while the reason still applies, and this call is driven by exactly the same rule, so a
+        // latched aim request, an accepted aim and a running reload all behave identically.
+        enforceSprintRestriction(player);
+    }
+
+    /**
+     * Applies a weapon's aiming configuration, or the neutral defaults when the weapon declares none.
+     *
+     * @param aiming the weapon's {@code aiming} block, may be {@code null}
+     */
+    private static void applyConfiguration(WeaponDefinition.Aiming aiming) {
+        if (aiming == null) {
+            zoom = 1.0F;
+            animationCurve = ZoomCurve.LINEAR;
+            zoomCurve = ZoomCurve.LINEAR;
+            animationSpeed = WeaponDefinition.Aiming.DEFAULT_SPEED;
+            zoomSpeed = WeaponDefinition.Aiming.DEFAULT_SPEED;
+            reloadZoomConfig = WeaponDefinition.AdsReloadZoom.DISABLED;
+            return;
         }
+        zoom = (float) aiming.zoom();
+        animationCurve = aiming.animationCurve();
+        zoomCurve = aiming.zoomCurve();
+        animationSpeed = aiming.animationSpeed();
+        zoomSpeed = aiming.zoomSpeed();
+        reloadZoomConfig = aiming.adsReloadZoom();
+    }
+
+    /**
+     * @param progress the current progress
+     * @param wanted   whether the aim state is wanted this tick
+     * @param seconds  the time to advance, already multiplied by the transition's speed
+     * @return the new progress, clamped into {@code [0, 1]}
+     */
+    private static float advance(float progress, boolean wanted, double seconds) {
+        double step = Double.isFinite(seconds) ? Math.max(0.0, seconds) / TRANSITION_SECONDS : 0.0;
+        double value = wanted ? progress + step : progress - step;
+        return (float) Math.max(0.0, Math.min(1.0, value));
     }
 
     /**
@@ -139,6 +173,29 @@ public final class WeaponAiming {
                     + "stays off", item.definition().name());
         }
         return reason;
+    }
+
+    /**
+     * Applies the weapon's ADS constraint to a sampled pose.
+     *
+     * <p>The constraint is driven by the <em>actual</em> eased ADS progress, so a partial aim applies a partial correction
+     * and releasing ADS restores the animation smoothly instead of snapping. The function is pure and returns the same
+     * pose object when the weapon has no constraint or no {@code ads_offset} bone, which keeps every existing weapon
+     * untouched.</p>
+     *
+     * @param pose        the sampled pose, may be {@code null}
+     * @param model       the weapon's model, may be {@code null}
+     * @param definition  the weapon definition, may be {@code null}
+     * @param partialTick the frame's partial tick, used to ease the progress exactly like the placement
+     * @return the corrected pose, or {@code pose} when nothing applies
+     */
+    public static WeaponPose constrainPose(WeaponPose pose, WeaponModel model, WeaponDefinition definition,
+                                           float partialTick) {
+        if (pose == null || definition == null || definition.aiming() == null) {
+            return pose;
+        }
+        return com.arg_studios.arg_weaponry.weapon.aiming.AdsConstraint.apply(pose, model,
+                definition.aiming().adsConstraint(), easedProgress(partialTick));
     }
 
     /**
@@ -180,24 +237,24 @@ public final class WeaponAiming {
 
     /**
      * @param partialTick the fraction of a client tick elapsed
-     * @return the eased progress of the aim transition, {@code 0} for hip fire and {@code 1} for full aim
+     * @return the eased progress of the aiming <em>animation</em> transition, {@code 0} for hip fire and {@code 1} for full
+     *         aim; this is what the placement blend and the sway reduction consume
      */
     public static float easedProgress(float partialTick) {
-        float interpolated = interpolate(partialTick);
-        return (float) curve.evaluate(interpolated);
+        return (float) animationCurve.evaluate(interpolate(previousAimProgress, aimProgress, partialTick));
     }
 
     /**
      * @param partialTick the fraction of a client tick elapsed
-     * @return the linear progress of the aim transition, interpolated between the last two ticks
+     * @return the eased progress of the zoom transition, {@code 0} for hip fire and {@code 1} for full aim
      */
-    public static float linearProgress(float partialTick) {
-        return interpolate(partialTick);
+    public static float zoomEasedProgress(float partialTick) {
+        return (float) zoomCurve.evaluate(interpolate(previousZoomProgress, zoomProgress, partialTick));
     }
 
-    private static float interpolate(float partialTick) {
+    private static float interpolate(float previous, float current, float partialTick) {
         float t = Float.isFinite(partialTick) ? Math.max(0.0F, Math.min(1.0F, partialTick)) : 0.0F;
-        return previousProgress + (progress - previousProgress) * t;
+        return previous + (current - previous) * t;
     }
 
     /**
@@ -205,19 +262,86 @@ public final class WeaponAiming {
      * @return the field-of-view multiplier to apply this frame, {@code 1.0} when not aiming
      */
     public static float fovMultiplier(float partialTick) {
-        float eased = easedProgress(partialTick);
+        float eased = zoomEasedProgress(partialTick);
         float target = Float.isFinite(zoom) ? zoom : 1.0F;
-        return 1.0F + (target - 1.0F) * eased;
+        float aiming = 1.0F + (target - 1.0F) * eased;
+        // The reload effect is a separate multiplier: it works while normal aiming is refused by no_aiming_on_reload, and
+        // is exactly 1.0 whenever there is no active reload zoom.
+        return aiming * RELOAD_ZOOM.multiplier(partialTick, reloadZoomConfig);
     }
 
-    /** @return whether the player is currently fully or partially aimed. */
+    /**
+     * @param partialTick the frame's partial tick
+     * @return the reload-specific zoom multiplier alone, for diagnostics and tests; {@code 1.0} when inactive
+     */
+    public static float reloadZoomMultiplier(float partialTick) {
+        return RELOAD_ZOOM.multiplier(partialTick, reloadZoomConfig);
+    }
+
+    /**
+     * @return whether the player is currently fully or partially aimed; this includes the tick an aim was requested on,
+     *         so a shot fired immediately after the click is already treated as an aimed shot
+     */
     public static boolean isAiming() {
-        return progress > 0.0F;
+        return holdingAim || aimProgress > 0.0F || zoomProgress > 0.0F;
+    }
+
+    /**
+     * @return whether aiming is wanted and allowed this tick. This is the state the weapon animation layers consume: it
+     *         changes on the tick the player aims or stops aiming, not when the visual transition happens to finish.
+     */
+    public static boolean isHoldingAim() {
+        return holdingAim;
     }
 
     /** @return the reason aiming is currently refused, or {@link AimBlockReason#NONE}. */
     public static AimBlockReason reason() {
         return reason;
+    }
+
+    /**
+     * Whether a sprint must not be started (and, when already running, must be stopped) right now.
+     *
+     * <p>This is the single rule the sprint guard uses. It reads the <em>intent</em> - a latched toggle request or an
+     * accepted aim - and not the progress of the transition, which has two consequences:</p>
+     * <ul>
+     *   <li>it is already true on the tick the aim is requested, which is what closes the one-tick window in which
+     *   vanilla's own input handling could otherwise start a sprint before the aim controller stops it;</li>
+     *   <li>it becomes false on the tick the aim is released, so sprinting is available again immediately instead of after
+     *   the blend-out.</li>
+     * </ul>
+     * <p>The rule itself lives in {@link AimInput#blocksSprint(boolean, boolean)} so it can be unit tested.</p>
+     *
+     * @return whether sprinting is refused while aiming
+     */
+    public static boolean blocksSprint() {
+        return AimInput.blocksSprint(holdingAim, INPUT.latched(), aimRequested,
+                WeaponReloadInput.isReloading(InteractionHand.MAIN_HAND));
+    }
+
+    /**
+     * @return whether the player is asking to aim this tick, even if aiming is temporarily refused by a reload, an
+     *         inspection or a draw. This is the intent the reload zoom and the sprint guards use; {@link #isAiming()}
+     *         remains the accepted, visually active state.
+     */
+    public static boolean isAimRequested() {
+        return aimRequested;
+    }
+
+    /**
+     * Stops a running sprint because the player is now aiming or reloading.
+     *
+     * <p>Called from the client tick: the aim state is authoritative on the client, so the ordinary vanilla stop command is
+     * all that is needed and both sides agree. A sprint that is already running is ended cleanly; every <em>new</em> sprint
+     * is refused by {@link #blocksSprint()} - both in {@code LocalPlayer#canStartSprinting} and in
+     * {@code Entity#setSprinting}, which is the setter every other caller goes through.</p>
+     *
+     * @param player the local player, may be {@code null}
+     */
+    public static void enforceSprintRestriction(LocalPlayer player) {
+        if (player != null && blocksSprint() && player.isSprinting()) {
+            player.setSprinting(false);
+        }
     }
 
     private static void reportOnce(WeaponItem item, String message, Object... arguments) {
@@ -229,12 +353,22 @@ public final class WeaponAiming {
 
     /** Clears the transition instantly; used when leaving the world or losing the weapon reference. */
     public static void reset() {
-        progress = 0.0F;
-        previousProgress = 0.0F;
+        aimProgress = 0.0F;
+        previousAimProgress = 0.0F;
+        zoomProgress = 0.0F;
+        previousZoomProgress = 0.0F;
         zoom = 1.0F;
-        curve = ZoomCurve.LINEAR;
+        animationCurve = ZoomCurve.LINEAR;
+        zoomCurve = ZoomCurve.LINEAR;
+        animationSpeed = WeaponDefinition.Aiming.DEFAULT_SPEED;
+        zoomSpeed = WeaponDefinition.Aiming.DEFAULT_SPEED;
+        holdingAim = false;
+        aimRequested = false;
         ownerItemId = null;
         reason = AimBlockReason.NO_WEAPON;
+        reloadZoomConfig = WeaponDefinition.AdsReloadZoom.DISABLED;
+        RELOAD_ZOOM.reset();
+        INPUT.reset();
         REPORTED.clear();
     }
 }

@@ -17,6 +17,10 @@ import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
  *   <tr><td>{@code kickback_recoil_amplitude}</td><td>blocks</td><td>{@link WeaponKickbackController}</td>
  *       <td>Backward displacement of the weapon and arms along the view axis for one accepted shot.
  *       <em>Optional</em>: when the weapon does not declare it the weapon does not move at all.</td></tr>
+ *   <tr><td>{@code kickback_aiming_modifier}</td><td>factor</td><td>{@link #kickbackBlocks(boolean)}</td>
+ *       <td>Multiplier on the weapon-model kickback while aiming. Optional, default {@code 1.0}, which preserves the
+ *       previous behaviour; {@code 0.0} removes the kickback while aiming. It never touches vertical or horizontal
+ *       recoil.</td></tr>
  *   <tr><td>{@code vertical_recoil}</td><td>degrees of pitch</td><td>{@link PlayerRecoilController}</td>
  *       <td>Upward aim offset one accepted shot adds to the player's accumulated recoil offset. It is an
  *       <em>impulse</em>, not the height of a bump: successive shots add, and the accumulated offset recovers over the
@@ -69,6 +73,9 @@ import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
  * @param kickbackEnabled        whether the weapon <em>configured</em> {@code kickback_recoil_amplitude} at all; this is
  *                               the enable switch, and it exists so a missing property can never be confused with a
  *                               configured zero
+ * @param kickbackAimingModifier {@code kickback_aiming_modifier}: factor on the weapon kickback while aiming, in
+ *                               {@code [0, 1]}; {@code 1.0} is the legacy behaviour and {@code 0.0} removes the
+ *                               weapon-model kickback at full ADS without touching the camera recoil
  * @param verticalDegrees        upward aim offset of one shot, in degrees of pitch
  * @param horizontalLeftDegrees  leftward aim offset of one shot, in degrees of yaw
  * @param horizontalRightDegrees rightward aim offset of one shot, in degrees of yaw
@@ -79,9 +86,10 @@ import com.arg_studios.arg_weaponry.weapon.WeaponDefinition;
  * @param crouchMultiplier       factor applied to the camera impulse while crouching, in {@code [0, 1]}
  * @param sustained              the {@code sustained_firing_Recoil} block, never {@code null}
  */
-public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, double verticalDegrees,
-                            double horizontalLeftDegrees, double horizontalRightDegrees, double smoothing,
-                            double recoverySpeed, double aimMultiplier, double crouchMultiplier, Sustained sustained) {
+public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, double kickbackAimingModifier,
+                            double verticalDegrees, double horizontalLeftDegrees, double horizontalRightDegrees,
+                            double smoothing, double recoverySpeed, double aimMultiplier, double crouchMultiplier,
+                            Sustained sustained) {
 
     /** The largest displacement one shot may request, in blocks. */
     public static final double MAX_KICKBACK_AMPLITUDE_BLOCKS = 2.0;
@@ -109,13 +117,20 @@ public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, doub
     /** Default {@code crouch_multiplier}: crouching keeps the configured camera impulse. */
     public static final double DEFAULT_CROUCH_MULTIPLIER = 1.0;
 
+    /**
+     * Default {@code kickback_aiming_modifier}: aiming keeps the configured weapon kickback, which is exactly the
+     * behaviour every existing pack had before the property existed.
+     */
+    public static final double DEFAULT_KICKBACK_AIMING_MODIFIER = 1.0;
+
     /** The neutral profile: no recoil at all, and kickback explicitly not configured. */
-    public static final RecoilProfile NONE = new RecoilProfile(0.0, false, 0.0, 0.0, 0.0,
-            PlayerRecoilController.DEFAULT_SMOOTHING, DEFAULT_RECOVERY_SPEED, DEFAULT_AIM_MULTIPLIER,
-            DEFAULT_CROUCH_MULTIPLIER, Sustained.NONE);
+    public static final RecoilProfile NONE = new RecoilProfile(0.0, false, DEFAULT_KICKBACK_AIMING_MODIFIER,
+            0.0, 0.0, 0.0, PlayerRecoilController.DEFAULT_SMOOTHING, DEFAULT_RECOVERY_SPEED,
+            DEFAULT_AIM_MULTIPLIER, DEFAULT_CROUCH_MULTIPLIER, Sustained.NONE);
 
     public RecoilProfile {
         kickbackBlocks = clamp(kickbackBlocks, 0.0, MAX_KICKBACK_AMPLITUDE_BLOCKS);
+        kickbackAimingModifier = clamp(kickbackAimingModifier, 0.0, 1.0);
         verticalDegrees = clamp(verticalDegrees, -MAX_VIEW_IMPULSE_DEGREES, MAX_VIEW_IMPULSE_DEGREES);
         horizontalLeftDegrees = clamp(horizontalLeftDegrees, 0.0, MAX_VIEW_IMPULSE_DEGREES);
         horizontalRightDegrees = clamp(horizontalRightDegrees, 0.0, MAX_VIEW_IMPULSE_DEGREES);
@@ -133,7 +148,9 @@ public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, doub
      */
     public RecoilProfile(double kickbackBlocks, double verticalDegrees, double horizontalLeftDegrees,
                          double horizontalRightDegrees, Sustained sustained) {
-        this(kickbackBlocks, true, verticalDegrees, horizontalLeftDegrees, horizontalRightDegrees, sustained);
+        this(kickbackBlocks, true, DEFAULT_KICKBACK_AIMING_MODIFIER, verticalDegrees, horizontalLeftDegrees,
+                horizontalRightDegrees, PlayerRecoilController.DEFAULT_SMOOTHING, DEFAULT_RECOVERY_SPEED,
+                DEFAULT_AIM_MULTIPLIER, DEFAULT_CROUCH_MULTIPLIER, sustained);
     }
 
     /**
@@ -142,9 +159,20 @@ public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, doub
      */
     public RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, double verticalDegrees,
                          double horizontalLeftDegrees, double horizontalRightDegrees, Sustained sustained) {
-        this(kickbackBlocks, kickbackEnabled, verticalDegrees, horizontalLeftDegrees, horizontalRightDegrees,
-                PlayerRecoilController.DEFAULT_SMOOTHING, DEFAULT_RECOVERY_SPEED, DEFAULT_AIM_MULTIPLIER,
-                DEFAULT_CROUCH_MULTIPLIER, sustained);
+        this(kickbackBlocks, kickbackEnabled, DEFAULT_KICKBACK_AIMING_MODIFIER, verticalDegrees, horizontalLeftDegrees,
+                horizontalRightDegrees, PlayerRecoilController.DEFAULT_SMOOTHING, DEFAULT_RECOVERY_SPEED,
+                DEFAULT_AIM_MULTIPLIER, DEFAULT_CROUCH_MULTIPLIER, sustained);
+    }
+
+    /**
+     * Backwards-compatible construction of a profile with the four original tuning properties but without
+     * {@code kickback_aiming_modifier}; the new property takes its legacy-compatible default of {@code 1.0}.
+     */
+    public RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, double verticalDegrees,
+                         double horizontalLeftDegrees, double horizontalRightDegrees, double smoothing,
+                         double recoverySpeed, double aimMultiplier, double crouchMultiplier, Sustained sustained) {
+        this(kickbackBlocks, kickbackEnabled, DEFAULT_KICKBACK_AIMING_MODIFIER, verticalDegrees, horizontalLeftDegrees,
+                horizontalRightDegrees, smoothing, recoverySpeed, aimMultiplier, crouchMultiplier, sustained);
     }
 
     /**
@@ -184,6 +212,7 @@ public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, doub
         return new RecoilProfile(
                 value(recoil.kickbackAmplitude()),
                 kickbackConfigured,
+                tuning(recoil.kickbackAimingModifier(), DEFAULT_KICKBACK_AIMING_MODIFIER),
                 value(recoil.vertical()),
                 recoil.horizontalMagnitude(true),
                 recoil.horizontalMagnitude(false),
@@ -223,6 +252,24 @@ public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, doub
         return kickbackEnabled && kickbackBlocks > 0.0;
     }
 
+    /**
+     * The weapon-model displacement of one shot for the player's current stance.
+     *
+     * <p>This is the <strong>only</strong> place {@code kickback_aiming_modifier} is applied. It scales the backward
+     * displacement and nothing else: the camera's vertical and horizontal recoil are produced by
+     * {@link #viewRecoilImpulse(Random, boolean, boolean)} and never observe this value. While hip-firing the amplitude is
+     * returned unchanged, so a weapon that does not declare the property keeps exactly the kick it had before.</p>
+     *
+     * @param aiming whether the player is aiming down the sights when the shot is accepted
+     * @return the displacement in blocks, {@code 0} when the weapon has no kickback
+     */
+    public double kickbackBlocks(boolean aiming) {
+        if (!hasKickback()) {
+            return 0.0;
+        }
+        return aiming ? kickbackBlocks * kickbackAimingModifier : kickbackBlocks;
+    }
+
     /** @return whether the weapon asks for any player/view angle change. */
     public boolean hasViewRecoil() {
         return verticalDegrees != 0.0 || horizontalLeftDegrees > 0.0 || horizontalRightDegrees > 0.0;
@@ -238,8 +285,8 @@ public record RecoilProfile(double kickbackBlocks, boolean kickbackEnabled, doub
      *
      * <p>Aiming applies {@code aim_multiplier}, crouching applies {@code crouch_multiplier}, and when both hold the two
      * are multiplied together - so {@code aim_multiplier 0.6} with {@code crouch_multiplier 0.8} yields {@code 0.48}.
-     * Neither multiplier is applied to the weapon-model kickback: that layer keeps using
-     * {@link #kickbackBlocks()} unchanged.</p>
+     * Neither multiplier is applied to the weapon-model kickback: that layer uses
+     * {@link #kickbackBlocks(boolean)}, where only {@code kickback_aiming_modifier} applies.</p>
      *
      * @param aiming    whether the player is currently aiming down the sights
      * @param crouching whether the player is currently crouching

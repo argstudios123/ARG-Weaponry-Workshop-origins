@@ -185,11 +185,15 @@ public enum ZoomCurve {
         }
         // Bare names without a family. Content packs write "ease in", "ease out" and "ease in out" (and the CSS-style
         // dashed variants) without naming a polynomial; those resolve to the quadratic family, which is documented here and
-        // in the report so the mapping is a decision rather than an accident.
+        // in the report so the mapping is a decision rather than an accident. The sine family is also accepted in its short
+        // form ("sine_in" / "sine_out" / "sine_in_out") because that is the vocabulary the aiming configuration documents.
         return switch (normalised) {
             case "ease", "easein", "in" -> EASE_IN_QUAD;
             case "easeout", "out" -> EASE_OUT_QUAD;
             case "easeinout", "inout" -> EASE_IN_OUT_QUAD;
+            case "sinein" -> EASE_IN_SINE;
+            case "sineout" -> EASE_OUT_SINE;
+            case "sineinout" -> EASE_IN_OUT_SINE;
             default -> null;
         };
     }

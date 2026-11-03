@@ -2,6 +2,7 @@ package com.arg_studios.arg_weaponry.client.render;
 
 import com.arg_studios.arg_weaponry.weapon.animation.SampledBone;
 import com.arg_studios.arg_weaponry.weapon.animation.WeaponPose;
+import com.arg_studios.arg_weaponry.weapon.model.BoneTransformPolicy;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBone;
 import com.arg_studios.arg_weaponry.weapon.model.ModelBoneNames;
 import com.arg_studios.arg_weaponry.weapon.model.RotationConvention;
@@ -20,7 +21,7 @@ import com.mojang.math.Axis;
  * <p>Geometry stays in model space, so every bone keeps the pivot sandwich the static renderer uses and
  * the animated properties are inserted between the pivot translation and its inverse:</p>
  * <pre>
- * T(animatedPosition) * T(pivot) * Rz,Ry,Rx(authored) * Rz,Ry,Rx(animated) * S(animatedScale) * T(-pivot)
+ * T(animatedPosition) * T(pivot) * Rz,Ry,Rx(authored + animated) * S(animatedScale) * T(-pivot)
  * </pre>
  * <ul>
  *     <li><strong>Position</strong> is an <em>additive offset</em> in the bone's parent space, applied
@@ -29,9 +30,12 @@ import com.mojang.math.Axis;
  *     exactly the same way, and the M100 DMR animations set hand offsets to zero while those bones carry
  *     large authored rotations, which only makes sense if the offset is added rather than replacing a
  *     transform.</li>
- *     <li><strong>Rotation</strong> is composed <em>after</em> the authored rotation, so the animation is a
- *     delta on top of the modelled rest pose. TaCZ composes the animated Euler rotation as an additional
- *     quaternion after the authored rotation quaternion, which is the same relationship.</li>
+ *     <li><strong>Rotation</strong> is <em>added to the authored Euler angles</em> before the single Z, Y, X
+ *     rotation is formed. That is Blockbench's own preview behaviour: {@code BoneAnimator#displayRotation}
+ *     adds the keyframe degrees to the bone's Euler components and three.js then builds one matrix from the
+ *     sum. Composing {@code R(authored) * R(animated)} instead is a different rotation whenever the two do
+ *     not commute, which is exactly the case for the hand bones and was the sixth-attempt bug. See
+ *     {@link BoneTransformPolicy} for the full derivation.</li>
  *     <li><strong>Scale</strong> is a per-axis multiplier applied about the pivot, matching TaCZ's
  *     {@code scale(...)} call after the rotations and before the pivot inverse.</li>
  * </ul>
@@ -40,12 +44,12 @@ import com.mojang.math.Axis;
  * zero stays zero (a scale of {@code (0, 0, 0)} collapses the bone instead of being ignored).</p>
  *
  * <h2>Rotation space</h2>
- * <p>Both the authored rest rotation and the animated rotation are passed through
- * {@link RotationConvention#toRenderSpace(Vec3)} before they are composed, which is what makes the composed frame
- * match the authoring tool's and the reference implementation's camera-space convention. That conversion inverts
- * pitch and roll and keeps yaw; without it the geometry is placed correctly but every animated tilt happens in the
- * wrong direction. See {@link RotationConvention} for the full derivation and the two references that agree on
- * it.</p>
+ * <p>The authored rest rotation and the animated rotation are both Bedrock-space triples, summed axis by axis, and the
+ * sum is passed through {@link RotationConvention#toRenderSpace(Vec3)} before the Z, Y, X rotation is formed. That
+ * conversion is what makes the composed frame match the authoring tool's and the reference implementation's camera-space
+ * convention; it inverts pitch and roll and keeps yaw. Without it the geometry is placed correctly but every animated
+ * tilt happens in the wrong direction. See {@link RotationConvention} for the full derivation and the references that
+ * agree on it.</p>
  *
  * <h2>Camera</h2>
  * <p>The {@code camera} bone is a view-animation target, not a placement anchor. Its channels are parsed,
@@ -93,53 +97,20 @@ public final class AnimatedBoneTransform {
      * @param pose      the animated transforms for this bone, or {@code null} to keep the authored transform
      */
     public static void apply(PoseStack poseStack, ModelBone bone, SampledBone pose) {
-        Vec3 pivot = bone.pivot();
-        Vec3 authoredRotation = RotationConvention.toRenderSpace(bone.rotation());
         Vec3 offset = pose == null ? null : pose.position();
-        Vec3 animatedRotation = pose == null || pose.rotation() == null
-                ? null : RotationConvention.toRenderSpace(pose.rotation());
+        Vec3 animatedRotation = pose == null ? null : pose.rotation();
         Vec3 animatedScale = pose == null ? null : pose.scale();
 
-        boolean translates = offset != null && !offset.isZero();
-        boolean authoredRotates = !authoredRotation.isZero();
-        boolean animatedRotates = animatedRotation != null && !animatedRotation.isZero();
-        boolean scales = animatedScale != null;
-
-        if (!translates && pivot.isZero() && !authoredRotates && !animatedRotates && !scales) {
-            return;
-        }
-
-        if (translates) {
-            poseStack.translate(offset.x(), offset.y(), offset.z());
-        }
-        poseStack.translate(pivot.x(), pivot.y(), pivot.z());
-        if (authoredRotates) {
-            rotateZYX(poseStack, authoredRotation);
-        }
-        if (animatedRotates) {
-            rotateZYX(poseStack, animatedRotation);
-        }
-        if (scales) {
-            poseStack.scale(animatedScale.x(), animatedScale.y(), animatedScale.z());
-        }
-        poseStack.translate(-pivot.x(), -pivot.y(), -pivot.z());
-    }
-
-    /**
-     * Rotates in the Z, Y, X order the Bedrock format declares rotations in.
-     *
-     * <p>The inverse of this composition is published as {@link #rotateInverseZYX(PoseStack, Vec3)} so
-     * that view-anchor resolution does not have to restate the convention.</p>
-     */
-    private static void rotateZYX(PoseStack poseStack, Vec3 rotation) {
-        if (rotation.z() != 0.0F) {
-            poseStack.rotateDegrees(Axis.ZP, rotation.z());
-        }
-        if (rotation.y() != 0.0F) {
-            poseStack.rotateDegrees(Axis.YP, rotation.y());
-        }
-        if (rotation.x() != 0.0F) {
-            poseStack.rotateDegrees(Axis.XP, rotation.x());
+        // The order and the spaces live in the pure policy, so a unit test can pin them; this method only executes them.
+        for (BoneTransformPolicy.Step step : BoneTransformPolicy.steps(bone, offset, animatedRotation, animatedScale)) {
+            Vec3 value = step.value();
+            switch (step.kind()) {
+                case TRANSLATE -> poseStack.translate(value.x(), value.y(), value.z());
+                case ROTATE_Z -> poseStack.rotateDegrees(Axis.ZP, value.z());
+                case ROTATE_Y -> poseStack.rotateDegrees(Axis.YP, value.y());
+                case ROTATE_X -> poseStack.rotateDegrees(Axis.XP, value.x());
+                case SCALE -> poseStack.scale(value.x(), value.y(), value.z());
+            }
         }
     }
 

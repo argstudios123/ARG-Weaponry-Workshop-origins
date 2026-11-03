@@ -18,8 +18,17 @@ package com.arg_studios.arg_weaponry.weapon.handoff;
  */
 public interface HandoffVisuals {
 
-    /** @return the identity of the weapon currently drawn, or {@link WeaponIdentity#NONE} when the live hand is drawn. */
-    WeaponIdentity activeIdentity();
+    /**
+     * The identity of the weapon this hand is <em>drawing</em>, which is not necessarily the one the inventory selects.
+     *
+     * <p>This is a pure query, and it must stay one: an implementation that adopts the live stack while answering it
+     * destroys the only fact the state machine needs in order to tell "nothing is drawn yet, so a weapon that becomes held
+     * has to be drawn" apart from "the drawn weapon is already the selected one". The previous implementation did exactly
+     * that, and the consequence was that a weapon picked up from a non-weapon slot never played its draw clip.</p>
+     *
+     * @return the identity of the weapon currently drawn, or {@link WeaponIdentity#NONE} when nothing is drawn
+     */
+    WeaponIdentity visualIdentity();
 
     /**
      * Retires the outgoing visual weapon and makes the given one active, with its own animator, before the next frame is
@@ -47,13 +56,24 @@ public interface HandoffVisuals {
     void stopHolster();
 
     /**
-     * Starts the active weapon's draw clip from its first frame. The weapon must have been adopted before this call, so its
-     * animator is brand new and has nothing on screen to fade from: the draw starts at its authored first frame.
+     * Arms the active weapon's draw clip: it is started at its first frame and paused there, so no frame of it is consumed
+     * before the weapon is actually drawn.
      *
-     * @return the authored length of the clip that started, or {@code 0} when the weapon declares no draw clip that the
+     * <p>The weapon must have been adopted before this call. The clip fades in from the pose the outgoing weapon was last
+     * drawn with, which is what makes the boundary continuous. The owner releases it with {@link #releaseDraw()} from the
+     * frame in which the weapon is really drawn, so the first drawn frame is the clip's first frame.</p>
+     *
+     * @return the authored length of the clip that was armed, or {@code 0} when the weapon declares no draw clip that the
      *         animation resource can provide
      */
     double playDraw();
+
+    /**
+     * Starts playback of the draw clip armed with {@link #playDraw()}.
+     *
+     * @return {@code true} when this call started a paused clip
+     */
+    boolean releaseDraw();
 
     /** @return {@code true} when the running draw clip has reached its end. */
     boolean drawFinished();

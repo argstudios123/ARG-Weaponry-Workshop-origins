@@ -1,10 +1,8 @@
 package com.arg_studios.arg_weaponry.network;
 
 import com.arg_studios.arg_weaponry.Constants;
-import com.arg_studios.arg_weaponry.platform.Services;
 import com.arg_studios.arg_weaponry.weapon.reload.WeaponReloadService;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionHand;
 
 /**
  * The play-phase glue for reloading: one serverbound request, one clientbound outcome.

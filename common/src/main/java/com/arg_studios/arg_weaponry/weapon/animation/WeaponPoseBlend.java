@@ -5,37 +5,7 @@ import com.arg_studios.arg_weaponry.weapon.model.Vec3;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Blends two {@link WeaponPose} values into one, per bone and per channel.
- *
- * <p>This is the pose algebra the view controller uses for its short cross-fade: when a draw or holster clip replaces
- * another clip, the pose that was on screen is kept and blended into the new clip's sampled pose instead of being
- * dropped. It is deliberately a pure value operation - no playback state, no clock, no Minecraft, no renderer - so the
- * blending rule is unit tested directly and the caller only has to decide <em>when</em> to blend and <em>how far</em>.</p>
- *
- * <h2>Channels</h2>
- * <ul>
- *     <li><strong>Rotation</strong> is authored as an Euler triple in degrees and composed by the renderer as
- *     {@code Rz * Ry * Rx}. It is therefore converted to a quaternion with exactly that order, interpolated with a
- *     shortest-path slerp and converted back, so two rotations take the geodesic between them. Interpolating the three
- *     Euler angles component-wise instead would swing through poses that are not between the two on the sphere, and it
- *     would take the long way round across the {@code +-180} wrap.</li>
- *     <li><strong>Position</strong> is an additive offset in parent space, so it is interpolated component-wise.</li>
- *     <li><strong>Scale</strong> is a per-axis factor, so it is interpolated component-wise from one factor to the
- *     other.</li>
- * </ul>
- *
- * <h2>Missing channels and missing bones</h2>
- * <p>A pose only carries the channels an animation actually animates; every channel it omits keeps the authored value.
- * In renderer terms that missing value is the <em>identity delta</em>: no rotation ({@code 0, 0, 0}), no offset
- * ({@code 0, 0, 0}) and no scale change ({@code 1, 1, 1}). A channel or a whole bone that exists on one side only is
- * therefore blended against that identity rather than against the other side's value, which is what makes a bone fade
- * out of (or into) the authored pose smoothly instead of snapping when the clip changes. That includes blending towards
- * an empty pose, i.e. a weapon that has no animation to return to.</p>
- *
- * @see WeaponPose
- * @see SampledBone
- */
+
 public final class WeaponPoseBlend {
 
     /** The identity delta of a scale channel: "the authored scale, unchanged". */
@@ -111,12 +81,16 @@ public final class WeaponPoseBlend {
     /**
      * Interpolates one rotation triple along the shortest arc.
      *
+     * <p>This is the rotation rule of the whole framework: {@link WeaponPoseBlend#blend} uses it for a full pose
+     * cross-fade and {@link WeaponPoseLayers#overlay} uses it for the movement and aiming layers, so an animated rotation
+     * always takes the geodesic between two values instead of a component-wise path through Euler space.</p>
+     *
      * @param from   the outgoing rotation in authored degrees, or {@code null} for the identity delta
      * @param to     the incoming rotation in authored degrees, or {@code null} for the identity delta
      * @param weight the blend position in {@code [0, 1]}
      * @return the interpolated rotation in authored degrees, never {@code null}
      */
-    static Vec3 blendRotation(Vec3 from, Vec3 to, float weight) {
+    public static Vec3 blendRotation(Vec3 from, Vec3 to, float weight) {
         Vec3 start = from == null ? Vec3.ZERO : from;
         Vec3 end = to == null ? Vec3.ZERO : to;
         if (weight <= 0.0F || end.equals(start)) {
